@@ -16,12 +16,13 @@ until its driver is added.
 
 The listing documents ESP32-S3R2, 2 MB PSRAM, 16 MB flash, USB-A, UART,
 GPIO, I2C, and Wi-Fi/Bluetooth. It does not document onboard GNSS, IMU,
-LoRa, battery charging, or a PMU. LCD/SD pin constants are provisional and
-must be checked against the board revision before upload.
+LoRa, battery charging, or a PMU. The LCD pin map is verified in
+`BUILD_NOTES.md`; the SD pin remains a hardware-test assumption.
 
 Build with `make`; monitor with `make cat PORT=/dev/ttyACM0`.
 Arduino CLI dependencies and exact install commands are documented in
-`README.md`. In summary, download LovyanGFX, Adafruit LSM9DS1 Library,
+`README.md`. The detailed build/configuration investigation is in
+`BUILD_NOTES.md`. In summary, download Adafruit GFX Library, Adafruit ST7789,
 Adafruit BMP280 Library, Adafruit LIS3MDL, Adafruit BusIO, and Adafruit
 Unified Sensor. The local `esp32jimlib` and `Arduino_CRC32` libraries are
 shared dependencies and should not be downloaded again.

@@ -1,5 +1,7 @@
 # ESP32-S3 Geek hardware test
 
+For the detailed reusable bring-up lessons, see [BUILD_NOTES.md](BUILD_NOTES.md).
+
 Bring-up project for the ESP32-S3 Geek board (Amazon ASIN B0CR6FV3QC).
 The test initializes the 1.14-inch LCD, probes the TF/microSD slot, reports
 ESP32 flash/PSRAM, and sends a `ReliableStreamESPNow("GEEK")` diagnostic once
