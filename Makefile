@@ -1,5 +1,6 @@
 BOARD ?= esp32s3
 PORT ?= /dev/ttyACM0
+CHIP ?= esp32
 ALIBS = ${HOME}/Arduino/libraries
 GIT_VERSION := "$(shell git describe --abbrev=8 --dirty --always --tags 2>/dev/null || echo local)"
 

@@ -5,6 +5,7 @@
 #include <SPI.h>
 #include <SD.h>
 #include <LovyanGFX.hpp>
+#include <jimlib.h>
 #include <espNowMux.h>
 #include <reliableStream.h>
 
