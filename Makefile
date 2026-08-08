@@ -6,12 +6,14 @@ GIT_VERSION := "$(shell git describe --abbrev=8 --dirty --always --tags 2>/dev/n
 
 BUILD_EXTRA_FLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\"
 BUILD_EXTRA_FLAGS += -I${ALIBS}/esp32jimlib/src -I${ALIBS}/Arduino_CRC32/src
+BUILD_EXTRA_FLAGS += -I${ALIBS}/LovyanGFX/src
 BUILD_EXTRA_FLAGS += -I${ESP_ROOT}/libraries/ArduinoOTA/src -I${ESP_ROOT}/libraries/WiFi/src
 EXCLUDE_DIRS = ${ALIBS}/lvgl|${ALIBS}/LovyanGFX|${ALIBS}/jimlib|${ALIBS}/esp32csim
 LIBS += ${ALIBS}/esp32jimlib/src/espNowMux.cpp
 LIBS += ${ALIBS}/esp32jimlib/src/jimlib.cpp
 LIBS += ${ALIBS}/esp32jimlib/src/simulatedFailures.cpp
 LIBS += ${ALIBS}/Arduino_CRC32/src/Arduino_CRC32.cpp ${ALIBS}/Arduino_CRC32/src/crc.cpp
+LIBS += $(wildcard ${ALIBS}/LovyanGFX/src/*.cpp)
 
 include ${ALIBS}/makeEspArduino/makeEspArduino.mk
 
