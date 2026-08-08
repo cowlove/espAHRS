@@ -9,6 +9,11 @@ its LSM9DS1 accelerometer/gyro/magnetometer at 0x6B/0x1C and BMP280 at 0x76
 or 0x77, then includes sensor health and pressure in the 1 Hz report. The
 board is external; it is not an onboard peripheral.
 
+All external sensors are optional. I2C has a 20 ms transaction timeout and
+missing devices are reported as `ABSENT`; the display and 1 Hz diagnostics
+continue normally. The future Qwiic GPS path currently reports `GPS=ABSENT`
+until its driver is added.
+
 The listing documents ESP32-S3R2, 2 MB PSRAM, 16 MB flash, USB-A, UART,
 GPIO, I2C, and Wi-Fi/Bluetooth. It does not document onboard GNSS, IMU,
 LoRa, battery charging, or a PMU. LCD/SD pin constants are provisional and
