@@ -13,7 +13,7 @@ LIBS += ${ALIBS}/esp32jimlib/src/espNowMux.cpp
 LIBS += ${ALIBS}/esp32jimlib/src/jimlib.cpp
 LIBS += ${ALIBS}/esp32jimlib/src/simulatedFailures.cpp
 LIBS += ${ALIBS}/Arduino_CRC32/src/Arduino_CRC32.cpp ${ALIBS}/Arduino_CRC32/src/crc.cpp
-LIBS += $(wildcard ${ALIBS}/LovyanGFX/src/*.cpp)
+LIBS += $(shell find ${ALIBS}/LovyanGFX/src -name '*.cpp' -print)
 
 include ${ALIBS}/makeEspArduino/makeEspArduino.mk
 
