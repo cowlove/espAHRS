@@ -15,7 +15,8 @@ Install the downloaded libraries with:
 
 ```sh
 arduino-cli lib install \
-  'LovyanGFX' \
+  'Adafruit GFX Library' \
+  'Adafruit ST7735 and ST7789 Library' \
   'Adafruit LSM9DS1 Library' \
   'Adafruit BMP280 Library' \
   'Adafruit Unified Sensor' \
@@ -27,7 +28,8 @@ Versions used during bring-up:
 
 | Library | Version | Used for |
 |---|---:|---|
-| LovyanGFX | 1.2.7 | ST7789-class 240×135 LCD |
+| Adafruit GFX Library | 1.12.6 | Display drawing primitives |
+| Adafruit ST7735 and ST7789 Library | 1.11.0 | ST7789-class 240×135 LCD |
 | Adafruit LSM9DS1 Library | 2.2.1 | BerryIMUv3 accelerometer, gyro, magnetometer |
 | Adafruit BMP280 Library | 3.0.0 | BerryIMUv3 pressure/altitude |
 | Adafruit LIS3MDL | 1.2.5 | LSM9DS1 library dependency |
@@ -57,6 +59,11 @@ arduino-cli compile --fqbn esp32:esp32:esp32s3 .
 ```
 
 ## External sensor addresses
+
+## LCD pin map
+
+Verified against the vendor ESP32-S3-GEEK demo sources: SCLK `12`, MOSI
+`11`, CS `10`, DC `8`, reset `9`, and backlight `7`.
 
 - LSM9DS1 accelerometer/gyro: `0x6B`
 - LSM9DS1 magnetometer: `0x1C`

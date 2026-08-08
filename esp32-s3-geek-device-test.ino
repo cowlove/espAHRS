@@ -4,7 +4,8 @@
 #include <WiFiUdp.h>
 #include <SPI.h>
 #include <SD.h>
-#include <LovyanGFX.hpp>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ST7789.h>
 #include <jimlib.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_LSM9DS1.h>
@@ -13,25 +14,12 @@
 #include <reliableStream.h>
 
 // Waveshare-style ESP32-S3 Geek pinout. Verify against the board revision.
-constexpr int LCD_SCLK = 12, LCD_MOSI = 11, LCD_CS = 10, LCD_DC = 13;
-constexpr int LCD_RST = 14, LCD_BL = 15;
+// Pin map verified against the vendor ESP32-S3-GEEK demo sources.
+constexpr int LCD_SCLK = 12, LCD_MOSI = 11, LCD_CS = 10, LCD_DC = 8;
+constexpr int LCD_RST = 9, LCD_BL = 7;
 constexpr int SD_CS = 4;
 
-class GeekDisplay : public lgfx::LGFX_Device {
-  lgfx::Panel_ST7789 _panel;
-  lgfx::Bus_SPI _bus;
-public:
-  GeekDisplay() {
-    auto b = _bus.config(); b.spi_host = SPI2_HOST; b.spi_mode = 0;
-    b.freq_write = 40000000; b.pin_sclk = LCD_SCLK; b.pin_mosi = LCD_MOSI;
-    b.pin_miso = -1; b.pin_dc = LCD_DC; _bus.config(b); _panel.setBus(&_bus);
-    auto p = _panel.config(); p.pin_cs = LCD_CS; p.pin_rst = LCD_RST;
-    p.panel_width = 135; p.panel_height = 240; p.offset_x = 0; p.offset_y = 0;
-    p.invert = true; p.rgb_order = false; _panel.config(p); setPanel(&_panel);
-  }
-};
-
-GeekDisplay display;
+Adafruit_ST7789 display(LCD_CS, LCD_DC, LCD_RST);
 ReliableStreamESPNow espnow("GEEK", true /* alwaysBroadcast */);
 Adafruit_LSM9DS1 imu;
 Adafruit_BMP280 baro;
@@ -40,8 +28,8 @@ bool gpsOk = false; // Reserved for the future Qwiic GPS module.
 
 void setupDisplay() {
   pinMode(LCD_BL, OUTPUT); digitalWrite(LCD_BL, HIGH);
-  display.init(); display.setRotation(1); display.fillScreen(TFT_BLACK);
-  display.setTextColor(TFT_WHITE, TFT_BLACK); display.setTextSize(2);
+  display.init(135, 240); display.setRotation(1); display.fillScreen(ST77XX_BLACK);
+  display.setTextColor(ST77XX_WHITE, ST77XX_BLACK); display.setTextSize(2);
   display.setCursor(4, 4); display.println("ESP32-S3 Geek");
   display.println("hardware test"); displayOk = true;
 }
@@ -92,7 +80,7 @@ void loop() {
     espnow.write(packet, true);
     Serial.print(packet);
     if (displayOk) {
-      display.fillRect(0, 42, 240, 70, TFT_BLACK); display.setCursor(4, 42);
+      display.fillRect(0, 42, 240, 70, ST77XX_BLACK); display.setCursor(4, 42);
       display.printf("1Hz %lus GPS %s\nIMU %s BARO %s\nP %.1f hPa SD %s",
                      last / 1000, gpsOk ? "OK" : "--", imuOk ? "OK" : "--",
                      baroOk ? "OK" : "--", pressure, sdOk ? "OK" : "--");
