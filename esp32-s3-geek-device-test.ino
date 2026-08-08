@@ -6,6 +6,9 @@
 #include <SD.h>
 #include <LovyanGFX.hpp>
 #include <jimlib.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_LSM9DS1.h>
+#include <Adafruit_BMP280.h>
 #include <espNowMux.h>
 #include <reliableStream.h>
 
@@ -30,7 +33,9 @@ public:
 
 GeekDisplay display;
 ReliableStreamESPNow espnow("GEEK", true /* alwaysBroadcast */);
-bool displayOk = false, sdOk = false;
+Adafruit_LSM9DS1 imu;
+Adafruit_BMP280 baro;
+bool displayOk = false, sdOk = false, imuOk = false, baroOk = false;
 
 void setupDisplay() {
   pinMode(LCD_BL, OUTPUT); digitalWrite(LCD_BL, HIGH);
@@ -45,12 +50,28 @@ void setupStorage() {
   Serial.printf("microSD CS=%d: %s\n", SD_CS, sdOk ? "OK" : "not detected");
 }
 
+void setupBerryIMU() {
+  // BerryIMUv3 normally uses I2C: LSM9DS1 XG=0x6B, magnetometer=0x1C,
+  // BMP280=0x76 (some modules strap the barometer to 0x77).
+  Wire.begin();
+  imuOk = imu.begin();
+  baroOk = baro.begin(0x76);
+  if (!baroOk) baroOk = baro.begin(0x77);
+  if (imuOk) {
+    imu.setupAccel(imu.LSM9DS1_ACCELRANGE_4G, imu.LSM9DS1_ACCELDATARATE_119HZ);
+    imu.setupMag(imu.LSM9DS1_MAGGAIN_4GAUSS);
+    imu.setupGyro(imu.LSM9DS1_GYROSCALE_245DPS);
+  }
+  Serial.printf("BerryIMUv3 LSM9DS1=%s BMP280=%s\n", imuOk ? "OK" : "WAIT", baroOk ? "OK" : "WAIT");
+}
+
 void setup() {
   Serial.begin(115200); delay(500); Serial.println("ESP32-S3 Geek device test");
   Serial.println("Built in: LCD, microSD, WiFi/BLE, USB, UART, GPIO, I2C");
-  setupDisplay(); setupStorage();
-  Serial.printf("LCD=%s SD=%s flash=%uMB PSRAM=%s\n", displayOk ? "OK" : "FAIL",
-                sdOk ? "OK" : "WAIT", ESP.getFlashChipSize() / 1048576,
+  setupDisplay(); setupStorage(); setupBerryIMU();
+  Serial.printf("LCD=%s SD=%s IMU=%s BARO=%s flash=%uMB PSRAM=%s\n", displayOk ? "OK" : "FAIL",
+                sdOk ? "OK" : "WAIT", imuOk ? "OK" : "WAIT", baroOk ? "OK" : "WAIT",
+                ESP.getFlashChipSize() / 1048576,
                 psramFound() ? "YES" : "NO");
 }
 
@@ -59,11 +80,15 @@ void loop() {
   if (millis() - last >= 1000) {
     last = millis();
     char packet[128];
-    snprintf(packet, sizeof(packet), "GEEK TEST=1 MILLIS=%lu LCD=%s SD=%s\n",
-             (unsigned long)last, displayOk ? "OK" : "FAIL", sdOk ? "OK" : "WAIT");
+    sensors_event_t accel, gyro, mag;
+    if (imuOk) imu.getEvent(&accel, &mag, &gyro, nullptr);
+    float pressure = baroOk ? baro.readPressure() / 100.0f : 0.0f;
+    snprintf(packet, sizeof(packet), "GEEK TEST=1 MILLIS=%lu LCD=%s SD=%s IMU=%s BARO=%s P=%.1f\n",
+             (unsigned long)last, displayOk ? "OK" : "FAIL", sdOk ? "OK" : "WAIT",
+             imuOk ? "OK" : "WAIT", baroOk ? "OK" : "WAIT", pressure);
     espnow.write(packet, true);
     Serial.print(packet);
-    if (displayOk) { display.fillRect(0, 42, 240, 28, TFT_BLACK); display.setCursor(4, 42); display.printf("1Hz %lus\nSD %s", last / 1000, sdOk ? "OK" : "WAIT"); }
+    if (displayOk) { display.fillRect(0, 42, 240, 28, TFT_BLACK); display.setCursor(4, 42); display.printf("1Hz %lus\nIMU %s B %.0f", last / 1000, imuOk ? "OK" : "WAIT", pressure); }
   }
   delay(1);
 }
