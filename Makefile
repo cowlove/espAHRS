@@ -8,7 +8,7 @@ BUILD_EXTRA_FLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\"
 BUILD_EXTRA_FLAGS += -I${ALIBS}/esp32jimlib/src -I${ALIBS}/Arduino_CRC32/src
 BUILD_EXTRA_FLAGS += -I${ALIBS}/LovyanGFX/src
 BUILD_EXTRA_FLAGS += -I${ESP_ROOT}/libraries/ArduinoOTA/src -I${ESP_ROOT}/libraries/WiFi/src
-EXCLUDE_DIRS = ${ALIBS}/lvgl|${ALIBS}/LovyanGFX|${ALIBS}/jimlib|${ALIBS}/esp32csim
+EXCLUDE_DIRS = ${ALIBS}/lvgl|${ALIBS}/LovyanGFX|${ALIBS}/TFT_eSPI|${ALIBS}/jimlib|${ALIBS}/esp32csim
 LIBS += ${ALIBS}/esp32jimlib/src/espNowMux.cpp
 LIBS += ${ALIBS}/esp32jimlib/src/jimlib.cpp
 LIBS += ${ALIBS}/esp32jimlib/src/simulatedFailures.cpp
