@@ -20,6 +20,8 @@ LoRa, battery charging, or a PMU. LCD/SD pin constants are provisional and
 must be checked against the board revision before upload.
 
 Build with `make`; monitor with `make cat PORT=/dev/ttyACM0`.
-Arduino CLI dependencies: LovyanGFX and the existing local esp32jimlib and
-Arduino_CRC32 libraries, plus Adafruit LSM9DS1 Library, Adafruit BMP280
-Library, Adafruit LIS3MDL, Adafruit BusIO, and Adafruit Unified Sensor.
+Arduino CLI dependencies and exact install commands are documented in
+`README.md`. In summary, download LovyanGFX, Adafruit LSM9DS1 Library,
+Adafruit BMP280 Library, Adafruit LIS3MDL, Adafruit BusIO, and Adafruit
+Unified Sensor. The local `esp32jimlib` and `Arduino_CRC32` libraries are
+shared dependencies and should not be downloaded again.

@@ -1,0 +1,64 @@
+# ESP32-S3 Geek hardware test
+
+Bring-up project for the ESP32-S3 Geek board (Amazon ASIN B0CR6FV3QC).
+The test initializes the 1.14-inch LCD, probes the TF/microSD slot, reports
+ESP32 flash/PSRAM, and sends a `ReliableStreamESPNow("GEEK")` diagnostic once
+per second.
+
+The BerryIMUv3 and SEQURE M10-25Q GPS are optional external Qwiic/I2C
+peripherals. They are not required for the firmware to run. Missing sensors
+are reported as `ABSENT`, with a 20 ms I2C timeout.
+
+## Arduino CLI dependencies
+
+Install the downloaded libraries with:
+
+```sh
+arduino-cli lib install \
+  'LovyanGFX' \
+  'Adafruit LSM9DS1 Library' \
+  'Adafruit BMP280 Library' \
+  'Adafruit Unified Sensor' \
+  'Adafruit BusIO' \
+  'Adafruit LIS3MDL'
+```
+
+Versions used during bring-up:
+
+| Library | Version | Used for |
+|---|---:|---|
+| LovyanGFX | 1.2.7 | ST7789-class 240×135 LCD |
+| Adafruit LSM9DS1 Library | 2.2.1 | BerryIMUv3 accelerometer, gyro, magnetometer |
+| Adafruit BMP280 Library | 3.0.0 | BerryIMUv3 pressure/altitude |
+| Adafruit LIS3MDL | 1.2.5 | LSM9DS1 library dependency |
+| Adafruit BusIO | 1.17.4 | Adafruit sensor-library dependency |
+| Adafruit Unified Sensor | 1.1.15 | Adafruit sensor interface |
+
+These are local/shared project dependencies and do not need downloading:
+
+- `esp32jimlib` — `jimlib.h`, `reliableStream.h`, ESP-NOW support
+- `Arduino_CRC32` — ReliableStream framing CRC
+- ESP32 Arduino core 3.2.0 — Wi-Fi, SPI, SD, Wire, USB support
+
+## Build and monitor
+
+```sh
+make
+make upload PORT=/dev/ttyACM0
+make cat PORT=/dev/ttyACM0
+```
+
+The current Makefile has explicit exclusions for unrelated global libraries.
+Arduino CLI compilation is also supported when the Makefile scanner encounters
+platform-library conflicts:
+
+```sh
+arduino-cli compile --fqbn esp32:esp32:esp32s3 .
+```
+
+## External sensor addresses
+
+- LSM9DS1 accelerometer/gyro: `0x6B`
+- LSM9DS1 magnetometer: `0x1C`
+- BMP280: `0x76`, with fallback to `0x77`
+- Future GPS: not yet implemented; currently reported as `GPS=ABSENT`
