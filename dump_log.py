@@ -72,10 +72,19 @@ def main() -> int:
         payload = bytearray(); seq = 0
         crc = __import__('zlib').crc32
         while len(payload) < size:
-            ser.write(f"GET {seq}\n".encode())
-            ser.flush()
-            time.sleep(0.10)
-            header = read_line(ser, deadline)
+            header = None
+            for attempt in range(4):
+                ser.write(f"GET {seq}\n".encode()); ser.flush(); time.sleep(0.10)
+                marker = read_protocol_line(ser, b"LOG_GET_OK ", deadline)
+                if not marker.startswith(f"LOG_GET_OK {seq}".encode()):
+                    continue
+                try:
+                    header = read_line(ser, deadline)
+                    break
+                except TimeoutError:
+                    if attempt == 3: raise
+            if header is None:
+                raise TimeoutError(f"no response to GET {seq}")
             cm = re.match(rb"LOG_CHUNK (\d+) (\d+) ([0-9A-Fa-f]+)\n", header)
             if not cm: raise RuntimeError("bad chunk header: " + header.decode(errors="replace"))
             got_seq, length, expected = int(cm.group(1)), int(cm.group(2)), int(cm.group(3), 16)

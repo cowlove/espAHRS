@@ -169,9 +169,15 @@ void dumpChunked() {
     size_t len = f.read(buf, chunkSize);
     if (!len) { size_t pos = f.position(); f.close(); Serial.printf("LOG_ERROR SD_READ seq=%lu pos=%lu\n", (unsigned long)seq, (unsigned long)pos); return; }
     String command;
-    if (!readSerialLine(command, 30000) || command != (String("GET ") + seq)) {
+    uint32_t deadline = millis() + 30000;
+    while ((int32_t)(deadline - millis()) > 0) {
+      if (!readSerialLine(command, 1000)) continue;
+      if (command == (String("GET ") + seq)) break;
+    }
+    if (command != (String("GET ") + seq)) {
       f.close(); Serial.printf("LOG_ERROR GET_TIMEOUT seq=%lu\n", (unsigned long)seq); return;
     }
+    Serial.printf("LOG_GET_OK %lu\n", (unsigned long)seq); Serial.flush();
     uint32_t sum = crc.calc(buf, len);
     Serial.printf("LOG_CHUNK %lu %u %08lX\n", (unsigned long)seq, (unsigned)len, (unsigned long)sum);
     size_t sent = 0;
