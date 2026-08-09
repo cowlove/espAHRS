@@ -22,11 +22,9 @@ constexpr int LCD_RST = 9, LCD_BL = 7;
 constexpr int SD_CS = 34, SD_SCK = 36, SD_MISO = 37, SD_MOSI = 35;
 constexpr int LOG_BUTTON = 0;
 
-// Use an explicit hardware SPI bus for the LCD.  The five-argument Adafruit
-// constructor is software SPI; on this board it can leave the panel showing
-// noise even though init() returns.  The vendor examples use the pins below.
-SPIClass lcdSpi(FSPI);
-Adafruit_ST7789 display(&lcdSpi, LCD_CS, LCD_DC, LCD_RST);
+// This is the LCD configuration from the last known-good pre-status-page
+// firmware.  Keep it unchanged until the panel is stable again.
+Adafruit_ST7789 display(LCD_CS, LCD_DC, LCD_RST);
 SPIClass sdSpi(HSPI);
 ReliableStreamESPNow espnow("GEEK", true /* alwaysBroadcast */);
 Adafruit_LSM9DS1 imu;
@@ -40,28 +38,11 @@ bool lastLogButton = true;
 uint32_t logButtonChangedMs = 0;
 
 void setupDisplay() {
-  // Keep the panel dark while its controller is powered and reset.  On a
-  // cold plug-in the ST7789 can otherwise remain in its power-on/noise state
-  // even though the SPI library reports a successful init.
-  pinMode(LCD_BL, OUTPUT); digitalWrite(LCD_BL, LOW);
-  pinMode(LCD_CS, OUTPUT); digitalWrite(LCD_CS, HIGH);
-  pinMode(LCD_DC, OUTPUT); digitalWrite(LCD_DC, HIGH);
-  pinMode(LCD_RST, OUTPUT); digitalWrite(LCD_RST, HIGH);
-  delay(100);
-  digitalWrite(LCD_RST, LOW); delay(20);
-  digitalWrite(LCD_RST, HIGH); delay(150);
-  lcdSpi.begin(LCD_SCLK, -1, LCD_MOSI, LCD_CS);
-  // The panel's native orientation is portrait in the ST7789 controller, but
-  // the board is mounted landscape.  Rotation 1 produces sideways glyphs on
-  // this particular Geek panel; rotation 3 is the readable landscape mode.
-  // Waveshare's ESP32-S3-GEEK reference driver explicitly uses SPI mode 3
-  // for this ST7789P3 panel.  Adafruit_ST7789 defaults to mode 0, which
-  // compiles and returns from init() but produces only snow on the panel.
-  display.init(135, 240, SPI_MODE3);
-  display.setRotation(3);
-  display.fillScreen(ST77XX_BLACK);
-  digitalWrite(LCD_BL, HIGH);
-  displayOk = true;
+  pinMode(LCD_BL, OUTPUT); digitalWrite(LCD_BL, HIGH);
+  display.init(135, 240); display.setRotation(1); display.fillScreen(ST77XX_BLACK);
+  display.setTextColor(ST77XX_WHITE, ST77XX_BLACK); display.setTextSize(2);
+  display.setCursor(4, 4); display.println("ESP32-S3 Geek");
+  display.println("hardware test"); displayOk = true;
 }
 
 void updateDisplay(uint32_t nowMs, float pressure) {
