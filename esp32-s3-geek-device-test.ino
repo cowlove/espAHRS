@@ -44,6 +44,7 @@ bool gpsOk = false;
 uint8_t gpsFixQuality = 0;
 uint8_t gpsSatellites = 0;
 float gpsPdop = 99.0f;
+uint32_t lastG5PacketMs = 0;
 SharedUbloxGPS sharedGps;
 AircraftAHRS ahrs;
 
@@ -101,7 +102,9 @@ void updateDisplay(uint32_t nowMs, float pressure) {
   display.printf("PD%.1f ", gpsPdop);
   display.setTextColor(qmcPOk ? ST77XX_GREEN : ST77XX_RED); display.print("QP ");
   display.setTextColor(imuOk ? ST77XX_GREEN : ST77XX_RED); display.print("IM ");
-  display.setTextColor(sdOk ? ST77XX_GREEN : ST77XX_RED); display.print("SD");
+  display.setTextColor(sdOk ? ST77XX_GREEN : ST77XX_RED); display.print("SD ");
+  bool g5Active = lastG5PacketMs != 0 && (nowMs - lastG5PacketMs) < 2000;
+  display.setTextColor(g5Active ? ST77XX_GREEN : ST77XX_RED); display.print("G5");
 
   beginRow(2, 3);
   display.setTextColor(sessionLog.active() ? ST77XX_YELLOW : ST77XX_WHITE, ST77XX_BLACK);
@@ -418,6 +421,7 @@ void loop() {
   }
   std::string g5Packet;
   while (g5.read(g5Packet) > 0) {
+    lastG5PacketMs = millis();
     if (sessionLog.active()) sessionLog.append(FUSION_LOG_G5_PACKET, micros(),
                                                 g5Packet.data(), g5Packet.size());
     Serial.printf("G5_PACKET len=%u\n", (unsigned)g5Packet.size());
