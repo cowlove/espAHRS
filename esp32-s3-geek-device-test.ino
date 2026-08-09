@@ -40,10 +40,34 @@ void setupDisplay() {
   // The panel's native orientation is portrait in the ST7789 controller, but
   // the board is mounted landscape.  Rotation 1 produces sideways glyphs on
   // this particular Geek panel; rotation 3 is the readable landscape mode.
-  display.init(135, 240); display.setRotation(3); display.fillScreen(ST77XX_BLACK);
-  display.setTextColor(ST77XX_WHITE, ST77XX_BLACK); display.setTextSize(2);
-  display.setCursor(4, 4); display.println("ESP32-S3 Geek");
-  display.println("hardware test"); displayOk = true;
+  display.init(135, 240); display.setRotation(3); displayOk = true;
+}
+
+void updateDisplay(uint32_t nowMs, float pressure) {
+  if (!displayOk) return;
+
+  // Redraw the complete page.  This deliberately avoids relying on the
+  // controller's text wrapping or on a partially-cleared region: the page is
+  // also a useful proof that the application loop, not just the boot splash,
+  // is executing.
+  display.fillScreen(ST77XX_BLACK);
+  display.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  display.setTextSize(1);
+  display.setCursor(4, 4);
+  display.println("ESP32-S3 GEEK");
+  display.println("LIVE HARDWARE TEST");
+  display.drawFastHLine(0, 22, display.width(), ST77XX_BLUE);
+  display.setCursor(4, 28);
+  display.print("UPDATE "); display.print((unsigned long)(nowMs / 1000)); display.println("s");
+  display.print("GPS   "); display.println(gpsOk ? "OK" : "ABSENT");
+  display.print("IMU   "); display.println(imuOk ? "OK" : "ABSENT");
+  display.print("BARO  "); display.println(baroOk ? "OK" : "ABSENT");
+  display.print("SD    "); display.println(sdOk ? "OK" : "ABSENT");
+  display.print("LOG   "); display.println(sessionLog.active() ? "ACTIVE" : "INACTIVE");
+  display.print("FILE  ");
+  display.println(sessionLog.active() ? sessionLog.fileName() : "(none)");
+  display.print("DROP  "); display.println((unsigned long)sessionLog.dropped());
+  display.print("PRES  "); display.print(pressure, 1); display.println(" hPa");
 }
 
 void setupStorage() {
@@ -158,24 +182,7 @@ void loop() {
     Serial.printf("AHRS roll=%.1f pitch=%.1f heading=%.1f baroAlt=%.1f climb=%.2f\n",
                   fused.rollDeg, fused.pitchDeg, fused.headingDeg,
                   fused.fusedAltitudeM, fused.fusedClimbRateMps);
-    if (displayOk) {
-      display.fillRect(0, 42, display.width(), display.height() - 42, ST77XX_BLACK);
-      display.setTextSize(1);
-      display.setCursor(4, 42);
-      display.print("1Hz "); display.print(last / 1000); display.print("s GPS ");
-      display.println(gpsOk ? "OK" : "--");
-      display.print("IMU "); display.print(imuOk ? "OK" : "--");
-      display.print(" BARO "); display.println(baroOk ? "OK" : "--");
-      display.print("P "); display.print(pressure, 1); display.print(" SD ");
-      display.println(sdOk ? "OK" : "--");
-      display.print("LOG "); display.println(sessionLog.active() ? "ON" : "OFF");
-      if (sessionLog.active()) {
-        display.print(sessionLog.fileName()); display.print(" D");
-        display.print((unsigned long)sessionLog.dropped());
-      } else {
-        display.print("READY");
-      }
-    }
+    updateDisplay(last, pressure);
   }
   delay(1);
 }
