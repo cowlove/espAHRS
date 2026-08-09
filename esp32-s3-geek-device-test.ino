@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <ArduinoOTA.h>
 #include <math.h>
+#include <Arduino_CRC32.h>
 #include <WiFiUdp.h>
 #include <SPI.h>
 #include <SD.h>
@@ -28,7 +29,6 @@ constexpr int I2C_SDA = 16, I2C_SCL = 17;
 constexpr int GPS_TX = 43, GPS_RX = 44;
 constexpr int SD_CS = 34, SD_SCK = 36, SD_MISO = 37, SD_MOSI = 35;
 constexpr int LOG_BUTTON = 0;
-constexpr uint32_t BOOT_LOG_DURATION_MS = 120000;
 constexpr uint32_t IMU_OUTPUT_PERIOD_US = 20000; // 50 Hz application stream
 
 // This is the LCD configuration from the last known-good pre-status-page
@@ -45,6 +45,7 @@ ImuKind imuKind = ImuKind::None;
 bool displayOk = false, sdOk = false, imuOk = false, baroOk = false, qmcOk = false;
 bool qmcPOk = false;
 bool gpsOk = false;
+uint8_t gpsFixQuality = 0;
 SharedUbloxGPS sharedGps;
 AircraftAHRS ahrs;
 ReliableStreamESPNow g5("G5", true /* incoming benchmark traffic */);
@@ -66,22 +67,17 @@ void updateDisplay(uint32_t nowMs, float pressure) {
   if (!displayOk) return;
 
   display.fillScreen(ST77XX_BLACK);
-  display.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-  display.setTextSize(1);
-  display.setCursor(4, 4);
-  display.print("GEEK LIVE "); display.print((unsigned long)(nowMs / 1000)); display.println("s");
-  display.drawFastHLine(0, 14, display.width(), ST77XX_BLUE);
-  int y = 18;
-  display.setCursor(4, y); display.print("GPS   "); display.println(gpsOk ? "OK" : "ABSENT"); y += 10;
-  display.setCursor(4, y); display.print("QMC   "); display.println(qmcPOk ? "QMC5883P" : qmcOk ? "QMC?" : "ABSENT"); y += 10;
-  display.setCursor(4, y); display.print("IMU   ");
-  display.println(imuKind == ImuKind::ICM20948 ? "ICM20948" :
-                  imuKind == ImuKind::LSM9DS1 ? "LSM9DS1" : "ABSENT"); y += 10;
-  display.setCursor(4, y); display.print("BARO  "); display.println(baroOk ? "OK" : "ABSENT"); y += 10;
-  display.setCursor(4, y); display.print("SD    "); display.println(sdOk ? "OK" : "ABSENT"); y += 10;
-  display.setCursor(4, y); display.print("LOG   "); display.println(sessionLog.active() ? "ACTIVE" : "INACTIVE"); y += 10;
-  display.setCursor(4, y); display.print("DROP  "); display.println((unsigned long)sessionLog.dropped()); y += 10;
-  display.setCursor(4, y); display.print("PRES  "); display.print(pressure, 1); display.println(" hPa");
+  display.setTextSize(2); display.setCursor(2, 4);
+  display.setTextColor(gpsOk ? ST77XX_GREEN : ST77XX_RED, ST77XX_BLACK);
+  display.printf("G%u ", gpsFixQuality);
+  display.setTextColor(qmcPOk ? ST77XX_GREEN : ST77XX_RED); display.print("QP ");
+  display.setTextColor(imuOk ? ST77XX_GREEN : ST77XX_RED); display.print("IM ");
+  display.setTextColor(sdOk ? ST77XX_GREEN : ST77XX_RED); display.print("SD\n");
+  display.setCursor(2, 28); display.setTextColor(sessionLog.active() ? ST77XX_YELLOW : ST77XX_WHITE);
+  display.print(sessionLog.active() ? "LOG" : "---");
+  display.setTextColor(ST77XX_WHITE); display.printf(" D%lu", (unsigned long)sessionLog.dropped());
+  display.setCursor(2, 52); display.printf("%lus", (unsigned long)(nowMs / 1000));
+  display.setCursor(2, 76); display.printf("P%.0f", pressure);
 }
 
 void setupStorage() {
@@ -89,6 +85,23 @@ void setupStorage() {
   sdOk = SD.begin(SD_CS, sdSpi, 20000000);
   Serial.printf("microSD SPI SCK=%d MISO=%d MOSI=%d CS=%d: %s\n",
                 SD_SCK, SD_MISO, SD_MOSI, SD_CS, sdOk ? "OK" : "not detected");
+}
+
+bool clearFusionLogs() {
+  File root = SD.open("/");
+  if (!root) return false;
+  bool ok = true; File entry;
+  while ((entry = root.openNextFile())) {
+    if (!entry.isDirectory()) {
+      String name = entry.name();
+      if (name.endsWith(".bin") && name.indexOf("fusion-") >= 0) {
+        String path = name.startsWith("/") ? name : "/" + name;
+        if (!SD.remove(path)) ok = false;
+      }
+    }
+    entry.close();
+  }
+  root.close(); return ok;
 }
 
 void setupG5Logging() {
@@ -126,16 +139,52 @@ void updateLoggingButton() {
   }
 }
 
-void updateBootLogging() {
-  if (bootLogSession && sessionLog.active() &&
-      (int32_t)(millis() - bootLogDeadlineMs) >= 0) {
-    sessionLog.stop();
-    bootLogSession = false;
-    Serial.printf("SESSION_LOG AUTO-STOPPED written=%lu dropped=%lu errors=%lu\n",
-                  (unsigned long)sessionLog.written(),
-                  (unsigned long)sessionLog.dropped(),
-                  (unsigned long)sessionLog.writeErrors());
+void updateBootLogging() {}
+
+bool readSerialLine(String &line, uint32_t timeoutMs) {
+  line = ""; uint32_t deadline = millis() + timeoutMs;
+  while ((int32_t)(deadline - millis()) > 0) {
+    while (Serial.available()) {
+      char c = (char)Serial.read();
+      if (c == '\n' || c == '\r') { line.trim(); return line.length() != 0; }
+      if (c >= 32 && c <= 126 && line.length() < 40) line += c;
+    }
+    delay(1);
   }
+  return false;
+}
+
+void dumpChunked() {
+  const uint32_t chunkSize = 512;
+  size_t totalSize = sessionLog.fileSize();
+  File f = SD.open(sessionLog.fileName(), FILE_READ);
+  if (!f) { Serial.println("LOG_ERROR OPEN"); return; }
+  Arduino_CRC32 crc;
+  Serial.printf("LOG_CHUNK_BEGIN %lu %lu\n", (unsigned long)totalSize, (unsigned long)chunkSize);
+  Serial.flush();
+  uint8_t buf[chunkSize]; uint32_t seq = 0;
+  while (f.available()) {
+    size_t len = f.read(buf, chunkSize);
+    if (!len) break;
+    String command;
+    for (;;) {
+      Serial.printf("LOG_CHUNK_READY %lu\n", (unsigned long)seq); Serial.flush();
+      if (!readSerialLine(command, 30000)) { f.close(); Serial.println("LOG_ERROR ACK_TIMEOUT"); return; }
+      if (command == (String("GET ") + seq)) break;
+    }
+    uint32_t sum = crc.calc(buf, len);
+    Serial.printf("LOG_CHUNK %lu %u %08lX\n", (unsigned long)seq, (unsigned)len, (unsigned long)sum);
+    size_t sent = 0;
+    while (sent < len) { size_t n = Serial.write(buf + sent, len - sent); if (n) sent += n; else { delay(1); yield(); } }
+    Serial.flush();
+    for (;;) {
+      if (!readSerialLine(command, 30000)) { f.close(); Serial.println("LOG_ERROR ACK_TIMEOUT"); return; }
+      if (command == (String("ACK ") + seq)) break;
+      if (command == (String("NACK ") + seq)) { seq--; break; }
+    }
+    seq++;
+  }
+  f.close(); Serial.printf("LOG_CHUNK_END %lu\n", (unsigned long)seq); Serial.flush();
 }
 
 void handleSerialCommands() {
@@ -160,17 +209,22 @@ void handleSerialCommands() {
     char c = (char)Serial.read();
     if (c == '\n' || c == '\r') {
       command.trim();
-      if (command.equalsIgnoreCase("DUMP")) {
+      if (command.equalsIgnoreCase("START_LOG")) {
+        if (sessionLog.active()) Serial.println("LOG_ERROR ACTIVE");
+        else if (sdOk && sessionLog.begin(SD)) Serial.println("SESSION_LOG STARTED");
+        else Serial.println("SESSION_LOG START FAILED");
+      } else if (command.equalsIgnoreCase("STOP_LOG")) {
+        if (!sessionLog.active()) Serial.println("LOG_ERROR INACTIVE");
+        else { sessionLog.stop(); Serial.printf("SESSION_LOG STOPPED written=%lu dropped=%lu errors=%lu\n", (unsigned long)sessionLog.written(), (unsigned long)sessionLog.dropped(), (unsigned long)sessionLog.writeErrors()); }
+      } else if (command.equalsIgnoreCase("FORMAT")) {
+        if (sessionLog.active()) Serial.println("LOG_ERROR ACTIVE");
+        else if (sdOk && clearFusionLogs()) Serial.println("SD_FORMAT OK (logs cleared)");
+        else Serial.println("SD_FORMAT FAIL");
+      } else if (command.equalsIgnoreCase("DUMP")) {
         if (sessionLog.active()) {
           Serial.println("LOG_ERROR ACTIVE");
         } else {
-          size_t size = sessionLog.fileSize();
-          Serial.printf("LOG_BEGIN %s %lu\n", sessionLog.fileName(),
-                        (unsigned long)size);
-          Serial.flush();
-          size_t sent = sessionLog.dumpTo(Serial);
-          Serial.flush();
-          Serial.printf("\nLOG_END %lu\n", (unsigned long)sent);
+          dumpChunked();
         }
       } else if (command.equalsIgnoreCase("SCAN")) {
         scanI2c();
@@ -265,7 +319,8 @@ void setupGPS() {
 
 void updateGPS(uint32_t nowMs) {
   if (!gpsOk || !sharedGps.check()) return;
-  bool valid = sharedGps.gnss.getFixType(0) >= 3;
+  gpsFixQuality = sharedGps.gnss.getFixType(0);
+  bool valid = gpsFixQuality >= 3;
   if (sessionLog.active()) {
     sessionLog.appendGps(nowMs,
       sharedGps.gnss.getLatitude(0), sharedGps.gnss.getLongitude(0),
@@ -289,14 +344,7 @@ void setup() {
                 imuOk ? "OK" : "ABSENT", baroOk ? "OK" : "ABSENT",
                 ESP.getFlashChipSize() / 1048576,
                 psramFound() ? "YES" : "NO");
-  if (sdOk && sessionLog.begin(SD)) {
-    bootLogSession = true;
-    bootLogDeadlineMs = millis() + BOOT_LOG_DURATION_MS;
-    Serial.printf("SESSION_LOG AUTO-STARTED duration=%lums\n",
-                  (unsigned long)BOOT_LOG_DURATION_MS);
-  } else {
-    Serial.println("SESSION_LOG AUTO-START FAILED");
-  }
+  Serial.println("SESSION_LOG READY (use START_LOG / STOP_LOG)");
 }
 
 void loop() {
