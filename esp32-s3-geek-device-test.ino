@@ -75,6 +75,20 @@ static bool isG5NmeaPacket(const uint8_t *data, size_t length) {
     if (memcmp(data + i, marker, sizeof(marker)) == 0) return true;
   return false;
 }
+
+static void stopSessionWithSummary() {
+  char summary[192];
+  snprintf(summary, sizeof(summary),
+           "STOP_SUMMARY written=%lu dropped=%lu errors=%lu g5_nmea_discarded=%lu",
+           (unsigned long)sessionLog.written(),
+           (unsigned long)sessionLog.dropped(),
+           (unsigned long)sessionLog.writeErrors(),
+           (unsigned long)discardedG5NmeaPackets);
+  // This event is queued before stop() drains and closes the file.  It remains
+  // available in battery/flight logs when serial output is unavailable.
+  sessionLog.append(FUSION_LOG_EVENT, micros(), summary, strlen(summary));
+  sessionLog.stop();
+}
 bool lastLogButton = true;
 uint32_t logButtonChangedMs = 0;
 bool bootLogSession = false;
@@ -176,7 +190,7 @@ void updateLoggingButton() {
     logButtonChangedMs = millis(); lastLogButton = pressed;
     if (pressed) {
       if (sessionLog.active()) {
-        sessionLog.stop();
+        stopSessionWithSummary();
         bootLogSession = false;
         Serial.printf("SESSION_LOG STOPPED written=%lu dropped=%lu errors=%lu g5_nmea_discarded=%lu\n",
                       (unsigned long)sessionLog.written(),
@@ -279,7 +293,7 @@ void handleSerialCommands() {
         else Serial.println("SESSION_LOG START FAILED");
       } else if (command.equalsIgnoreCase("STOP_LOG")) {
         if (!sessionLog.active()) Serial.println("LOG_ERROR INACTIVE");
-        else { sessionLog.stop(); Serial.printf("SESSION_LOG STOPPED written=%lu dropped=%lu errors=%lu g5_nmea_discarded=%lu\n", (unsigned long)sessionLog.written(), (unsigned long)sessionLog.dropped(), (unsigned long)sessionLog.writeErrors(), (unsigned long)discardedG5NmeaPackets); }
+        else { stopSessionWithSummary(); Serial.printf("SESSION_LOG STOPPED written=%lu dropped=%lu errors=%lu g5_nmea_discarded=%lu\n", (unsigned long)sessionLog.written(), (unsigned long)sessionLog.dropped(), (unsigned long)sessionLog.writeErrors(), (unsigned long)discardedG5NmeaPackets); }
       } else if (command.equalsIgnoreCase("FORMAT")) {
         if (sessionLog.active()) Serial.println("LOG_ERROR ACTIVE");
         else if (sdOk && clearFusionLogs()) Serial.println("SD_FORMAT OK (logs cleared)");
