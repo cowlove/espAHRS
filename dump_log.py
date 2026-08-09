@@ -81,8 +81,7 @@ def main() -> int:
             if not cm: raise RuntimeError("bad chunk header: " + header.decode(errors="replace"))
             got_seq, length, expected = int(cm.group(1)), int(cm.group(2)), int(cm.group(3), 16)
             if got_seq != seq: raise RuntimeError("unexpected chunk sequence")
-            data = ser.read(length)
-            if len(data) != length: raise TimeoutError("timed out receiving chunk")
+            data = read_exact(ser, length, deadline)
             if (crc(data) & 0xffffffff) != expected:
                 ser.write(f"NACK {seq}\n".encode()); raise RuntimeError(f"CRC mismatch on chunk {seq}")
             payload.extend(data); ser.write(f"ACK {seq}\n".encode()); ser.flush(); seq += 1

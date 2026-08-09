@@ -155,7 +155,9 @@ bool readSerialLine(String &line, uint32_t timeoutMs) {
 }
 
 void dumpChunked() {
-  const uint32_t chunkSize = 512;
+  // Small diagnostic chunks keep USB CDC buffering and SD read failures
+  // independently observable. Increase only after the ACK path is proven.
+  const uint32_t chunkSize = 64;
   size_t totalSize = sessionLog.fileSize();
   File f = SD.open(sessionLog.fileName(), FILE_READ);
   if (!f) { Serial.println("LOG_ERROR OPEN"); return; }
@@ -165,7 +167,7 @@ void dumpChunked() {
   uint8_t buf[chunkSize]; uint32_t seq = 0;
   while (f.available()) {
     size_t len = f.read(buf, chunkSize);
-    if (!len) break;
+    if (!len) { size_t pos = f.position(); f.close(); Serial.printf("LOG_ERROR SD_READ seq=%lu pos=%lu\n", (unsigned long)seq, (unsigned long)pos); return; }
     String command;
     for (;;) {
       Serial.printf("LOG_CHUNK_READY %lu\n", (unsigned long)seq); Serial.flush();
