@@ -167,7 +167,7 @@ void dumpChunked(uint32_t startSeq = 0) {
   Arduino_CRC32 crc;
   Serial.printf("LOG_CHUNK_BEGIN %lu %lu\n", (unsigned long)totalSize, (unsigned long)chunkSize);
   Serial.flush();
-  uint8_t buf[chunkSize]; uint32_t seq = 0;
+  uint8_t buf[chunkSize]; uint32_t seq = startSeq;
   while (f.available()) {
     size_t len = f.read(buf, chunkSize);
     if (!len) { size_t pos = f.position(); f.close(); Serial.printf("LOG_ERROR SD_READ seq=%lu pos=%lu\n", (unsigned long)seq, (unsigned long)pos); return; }
