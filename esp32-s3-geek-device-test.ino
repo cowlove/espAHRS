@@ -19,6 +19,7 @@
 // Pin map verified against the vendor ESP32-S3-GEEK demo sources.
 constexpr int LCD_SCLK = 12, LCD_MOSI = 11, LCD_CS = 10, LCD_DC = 8;
 constexpr int LCD_RST = 9, LCD_BL = 7;
+constexpr int I2C_SDA = 16, I2C_SCL = 17;
 constexpr int SD_CS = 34, SD_SCK = 36, SD_MISO = 37, SD_MOSI = 35;
 constexpr int LOG_BUTTON = 0;
 
@@ -102,7 +103,9 @@ void updateLoggingButton() {
 void setupBerryIMU() {
   // BerryIMUv3 normally uses I2C: LSM9DS1 XG=0x6B, magnetometer=0x1C,
   // BMP280=0x76 (some modules strap the barometer to 0x77).
-  Wire.begin();
+  // Waveshare's Geek I2C example uses GPIO16/17. Explicit pins are required:
+  // the ESP32-S3 defaults can overlap the LCD's DC/RESET pins (8/9).
+  Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setTimeOut(20); // Missing Qwiic hardware must never stall the test.
   imuOk = imu.begin();
   baroOk = baro.begin(0x76);
