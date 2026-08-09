@@ -156,10 +156,17 @@ void loop() {
                   fused.rollDeg, fused.pitchDeg, fused.headingDeg,
                   fused.fusedAltitudeM, fused.fusedClimbRateMps);
     if (displayOk) {
-      display.fillRect(0, 42, 240, 70, ST77XX_BLACK); display.setCursor(4, 42);
-      display.printf("1Hz %lus GPS %s\nIMU %s BARO %s\nP %.1f hPa SD %s",
+      display.fillRect(0, 42, 240, 93, ST77XX_BLACK); display.setCursor(4, 42);
+      display.printf("1Hz %lus GPS %s\nIMU %s BARO %s\nP %.1f SD %s\nLOG %s\n",
                      last / 1000, gpsOk ? "OK" : "--", imuOk ? "OK" : "--",
-                     baroOk ? "OK" : "--", pressure, sdOk ? "OK" : "--");
+                     baroOk ? "OK" : "--", pressure, sdOk ? "OK" : "--",
+                     sessionLog.active() ? "ON" : "OFF");
+      if (sessionLog.active()) {
+        display.printf("%s D%lu", sessionLog.fileName(),
+                       (unsigned long)sessionLog.dropped());
+      } else {
+        display.print("READY");
+      }
     }
   }
   delay(1);
