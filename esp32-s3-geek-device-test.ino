@@ -54,7 +54,10 @@ void setupDisplay() {
   // The panel's native orientation is portrait in the ST7789 controller, but
   // the board is mounted landscape.  Rotation 1 produces sideways glyphs on
   // this particular Geek panel; rotation 3 is the readable landscape mode.
-  display.init(135, 240);
+  // Waveshare's ESP32-S3-GEEK reference driver explicitly uses SPI mode 3
+  // for this ST7789P3 panel.  Adafruit_ST7789 defaults to mode 0, which
+  // compiles and returns from init() but produces only snow on the panel.
+  display.init(135, 240, SPI_MODE3);
   display.setRotation(3);
   display.fillScreen(ST77XX_BLACK);
   digitalWrite(LCD_BL, HIGH);
