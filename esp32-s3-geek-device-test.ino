@@ -4,6 +4,7 @@
 #include <WiFiUdp.h>
 #include <SPI.h>
 #include <SD.h>
+#include <SD_MMC.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
 #include <jimlib.h>
@@ -19,7 +20,7 @@
 // Pin map verified against the vendor ESP32-S3-GEEK demo sources.
 constexpr int LCD_SCLK = 12, LCD_MOSI = 11, LCD_CS = 10, LCD_DC = 8;
 constexpr int LCD_RST = 9, LCD_BL = 7;
-constexpr int SD_CS = 4;
+constexpr int SD_CLK = 5, SD_CMD = 3, SD_D0 = 7;
 constexpr int LOG_BUTTON = 0;
 
 Adafruit_ST7789 display(LCD_CS, LCD_DC, LCD_RST);
@@ -43,8 +44,9 @@ void setupDisplay() {
 }
 
 void setupStorage() {
-  sdOk = SD.begin(SD_CS, SPI, 20000000);
-  Serial.printf("microSD CS=%d: %s\n", SD_CS, sdOk ? "OK" : "not detected");
+  sdOk = SD_MMC.setPins(SD_CLK, SD_CMD, SD_D0) && SD_MMC.begin("/sdcard", true);
+  Serial.printf("microSD SD_MMC CLK=%d CMD=%d D0=%d: %s\n", SD_CLK, SD_CMD, SD_D0,
+                sdOk ? "OK" : "not detected");
 }
 
 void setupG5Logging() {
@@ -71,7 +73,7 @@ void updateLoggingButton() {
                       (unsigned long)sessionLog.written(),
                       (unsigned long)sessionLog.dropped(),
                       (unsigned long)sessionLog.writeErrors());
-      } else if (sessionLog.begin(SD_CS)) {
+      } else if (sdOk && sessionLog.begin(SD_MMC)) {
         Serial.println("SESSION_LOG STARTED");
       } else {
         Serial.println("SESSION_LOG START FAILED");
