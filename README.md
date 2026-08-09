@@ -84,9 +84,8 @@ make FUSION_SHARED_DIR=../tbeam-supreme-device-test
 This supplies `AircraftAHRS.h/.cpp` and `FusionSessionLog.h`. The same
 non-blocking logger records raw G5 ESP-NOW frames, decoded G5 packets, IMU
 samples, and barometer samples. GPIO0 toggles logging and the Geek board's
-microSD uses SD/MMC 1-bit mode: CLK GPIO5, CMD GPIO3, and D0 GPIO7. GPIO4 is
-not used as an SPI chip-select in this mode. GPS records remain absent until a
-GPS source is added.
+microSD uses the documented HSPI wiring: SCK GPIO36, MISO GPIO37, MOSI GPIO35,
+and CS GPIO34. GPS records remain absent until a GPS source is added.
 
 For a different checkout or packaged shared library, override
 `FUSION_SHARED_DIR` with its path. Keep the shared source and both projects on
