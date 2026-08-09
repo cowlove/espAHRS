@@ -17,6 +17,10 @@ class FusionSessionLog {
     FS *storage_=&SD;
     volatile uint32_t sequence_=0, dropped_=0, written_=0, writeErrors_=0;
     volatile bool active_=false;
+    // G5 callbacks and the main sensor loop can both produce records.  The
+    // sequence assignment and queue insertion must be one critical section;
+    // otherwise two producers can race and emit duplicate sequence numbers.
+    portMUX_TYPE producerMux_ = portMUX_INITIALIZER_UNLOCKED;
     char fileName_[32] = {};
     static void taskEntry(void *arg) { static_cast<FusionSessionLog *>(arg)->writerLoop(); }
     void writerLoop() {
@@ -101,9 +105,10 @@ private:
         if (next >= 10000) return false;
         char n[32]; snprintf(n,sizeof(n),"%s%04u.bin",prefix,next);
         if (storage_->exists(n)) return false;
-        strncpy(fileName_, n, sizeof(fileName_) - 1);
+                strncpy(fileName_, n, sizeof(fileName_) - 1);
         fileName_[sizeof(fileName_) - 1] = '\0';
         { file_=storage_->open(n,FILE_WRITE); if (!file_) return false;
+                sequence_=0;
                 queue_=xQueueCreate(QueueDepth,sizeof(QueueItem));
                 if (!queue_) { file_.close(); return false; }
                 active_=true;
@@ -160,10 +165,14 @@ public:
     }
     bool append(FusionLogType type,uint64_t t,const void *p,uint32_t n) {
         if (!active_ || n>MaxPayload) { if (active_) dropped_++; return false; }
-        QueueItem item; item.header.timestampUs=t; item.header.sequence=sequence_++;
+        QueueItem item; item.header.timestampUs=t;
         item.header.type=type; item.header.payloadLength=n;
         if (n) memcpy(item.payload,p,n);
-        if (xQueueSend(queue_,&item,0)!=pdTRUE) { dropped_++; return false; }
+        portENTER_CRITICAL(&producerMux_);
+        item.header.sequence=sequence_++;
+        const bool queued = xQueueSend(queue_,&item,0)==pdTRUE;
+        portEXIT_CRITICAL(&producerMux_);
+        if (!queued) { dropped_++; return false; }
         return true;
     }
     bool appendImu(uint64_t t, float gx, float gy, float gz,
@@ -191,4 +200,3 @@ public:
     }
     void flush() { /* writer task owns SD I/O; it flushes when the queue drains */ }
 };
-

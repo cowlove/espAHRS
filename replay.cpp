@@ -36,6 +36,8 @@ int main(int argc, char **argv) {
     AircraftAHRS ahrs;
     uint64_t records = 0, bytes = 0;
     uint32_t lastMs = 0;
+    uint32_t expectedSequence = 0, sequenceGaps = 0, sequenceDuplicates = 0;
+    uint32_t firstSequenceAnomaly = UINT32_MAX;
     uint32_t counts[9] = {};
     ReplayHeader h{};
     while (in.read(reinterpret_cast<char *>(&h), sizeof(h))) {
@@ -52,6 +54,12 @@ int main(int argc, char **argv) {
         }
         bytes += sizeof(h) + h.payloadLength;
         ++records;
+        if (h.sequence != expectedSequence) {
+            if (h.sequence < expectedSequence) ++sequenceDuplicates;
+            else sequenceGaps += h.sequence - expectedSequence;
+            if (firstSequenceAnomaly == UINT32_MAX) firstSequenceAnomaly = h.sequence;
+        }
+        expectedSequence = h.sequence + 1;
         if (h.type < 9) ++counts[h.type];
         const uint32_t nowMs = msFromUs(h.timestampUs);
         if (nowMs > lastMs) lastMs = nowMs;
@@ -91,9 +99,11 @@ int main(int argc, char **argv) {
                 counts[FUSION_LOG_COMPASS0], counts[FUSION_LOG_COMPASS1],
                 counts[FUSION_LOG_BARO], counts[FUSION_LOG_G5_RAW_ESPNOW],
                 counts[FUSION_LOG_G5_PACKET]);
+    std::printf("SEQUENCE gaps=%u duplicates=%u first_anomaly=%s\n",
+                sequenceGaps, sequenceDuplicates,
+                firstSequenceAnomaly == UINT32_MAX ? "none" : std::to_string(firstSequenceAnomaly).c_str());
     std::printf("STATE roll=%.3f pitch=%.3f heading=%.3f compass=%.3f valid=%d\n",
                 s.rollDeg, s.pitchDeg, s.headingDeg, s.fusedCompassHeadingDeg,
                 s.compassAidingValid ? 1 : 0);
     return in.eof() ? 0 : 1;
 }
-
