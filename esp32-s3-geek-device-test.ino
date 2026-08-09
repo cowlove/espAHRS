@@ -46,6 +46,7 @@ uint8_t gpsFixQuality = 0;
 uint8_t gpsSatellites = 0;
 float gpsPdop = 99.0f;
 uint32_t lastG5PacketMs = 0;
+uint32_t discardedG5NmeaPackets = 0;
 SharedUbloxGPS sharedGps;
 AircraftAHRS ahrs;
 
@@ -66,6 +67,14 @@ const float compass1Calibration[3][3] = {
 };
 ReliableStreamESPNow g5("G5", true /* incoming benchmark traffic */);
 FusionSessionLog sessionLog;
+
+static bool isG5NmeaPacket(const uint8_t *data, size_t length) {
+  static const uint8_t marker[] = {'N','M','E','A','='};
+  if (!data || length < sizeof(marker)) return false;
+  for (size_t i = 0; i + sizeof(marker) <= length; ++i)
+    if (memcmp(data + i, marker, sizeof(marker)) == 0) return true;
+  return false;
+}
 bool lastLogButton = true;
 uint32_t logButtonChangedMs = 0;
 bool bootLogSession = false;
@@ -154,6 +163,7 @@ void setupG5Logging() {
       if (sessionLog.active() && len >= 0 && len <= 506) {
         uint8_t raw[512]; memcpy(raw, mac, 6);
         if (len) memcpy(raw + 6, data, len);
+        if (isG5NmeaPacket(raw, len + 6)) { ++discardedG5NmeaPackets; return; }
         sessionLog.append(FUSION_LOG_G5_RAW_ESPNOW, micros(), raw, len + 6);
       }
     });
@@ -168,10 +178,11 @@ void updateLoggingButton() {
       if (sessionLog.active()) {
         sessionLog.stop();
         bootLogSession = false;
-        Serial.printf("SESSION_LOG STOPPED written=%lu dropped=%lu errors=%lu\n",
+        Serial.printf("SESSION_LOG STOPPED written=%lu dropped=%lu errors=%lu g5_nmea_discarded=%lu\n",
                       (unsigned long)sessionLog.written(),
                       (unsigned long)sessionLog.dropped(),
-                      (unsigned long)sessionLog.writeErrors());
+                      (unsigned long)sessionLog.writeErrors(),
+                      (unsigned long)discardedG5NmeaPackets);
       } else if (sdOk && sessionLog.begin(SD)) {
         bootLogSession = false;
         Serial.println("SESSION_LOG STARTED");
@@ -268,7 +279,7 @@ void handleSerialCommands() {
         else Serial.println("SESSION_LOG START FAILED");
       } else if (command.equalsIgnoreCase("STOP_LOG")) {
         if (!sessionLog.active()) Serial.println("LOG_ERROR INACTIVE");
-        else { sessionLog.stop(); Serial.printf("SESSION_LOG STOPPED written=%lu dropped=%lu errors=%lu\n", (unsigned long)sessionLog.written(), (unsigned long)sessionLog.dropped(), (unsigned long)sessionLog.writeErrors()); }
+        else { sessionLog.stop(); Serial.printf("SESSION_LOG STOPPED written=%lu dropped=%lu errors=%lu g5_nmea_discarded=%lu\n", (unsigned long)sessionLog.written(), (unsigned long)sessionLog.dropped(), (unsigned long)sessionLog.writeErrors(), (unsigned long)discardedG5NmeaPackets); }
       } else if (command.equalsIgnoreCase("FORMAT")) {
         if (sessionLog.active()) Serial.println("LOG_ERROR ACTIVE");
         else if (sdOk && clearFusionLogs()) Serial.println("SD_FORMAT OK (logs cleared)");
@@ -428,6 +439,10 @@ void loop() {
   std::string g5Packet;
   while (g5.read(g5Packet) > 0) {
     lastG5PacketMs = millis();
+    if (isG5NmeaPacket(reinterpret_cast<const uint8_t *>(g5Packet.data()), g5Packet.size())) {
+      ++discardedG5NmeaPackets;
+      continue;
+    }
     if (sessionLog.active()) sessionLog.append(FUSION_LOG_G5_PACKET, micros(),
                                                 g5Packet.data(), g5Packet.size());
     Serial.printf("G5_PACKET len=%u\n", (unsigned)g5Packet.size());
