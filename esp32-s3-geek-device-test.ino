@@ -48,28 +48,22 @@ void setupDisplay() {
 void updateDisplay(uint32_t nowMs, float pressure) {
   if (!displayOk) return;
 
-  // Redraw the complete page.  This deliberately avoids relying on the
-  // controller's text wrapping or on a partially-cleared region: the page is
-  // also a useful proof that the application loop, not just the boot splash,
-  // is executing.
-  display.fillScreen(ST77XX_BLACK);
+  // Keep the known-good controller initialization above. Only the drawing
+  // changes here; use explicit positions so text cannot wrap unexpectedly.
+  display.fillRect(0, 0, display.width(), display.height(), ST77XX_BLACK);
   display.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
   display.setTextSize(1);
   display.setCursor(4, 4);
-  display.println("ESP32-S3 GEEK");
-  display.println("LIVE HARDWARE TEST");
-  display.drawFastHLine(0, 22, display.width(), ST77XX_BLUE);
-  display.setCursor(4, 28);
-  display.print("UPDATE "); display.print((unsigned long)(nowMs / 1000)); display.println("s");
-  display.print("GPS   "); display.println(gpsOk ? "OK" : "ABSENT");
-  display.print("IMU   "); display.println(imuOk ? "OK" : "ABSENT");
-  display.print("BARO  "); display.println(baroOk ? "OK" : "ABSENT");
-  display.print("SD    "); display.println(sdOk ? "OK" : "ABSENT");
-  display.print("LOG   "); display.println(sessionLog.active() ? "ACTIVE" : "INACTIVE");
-  display.print("FILE  ");
-  display.println(sessionLog.active() ? sessionLog.fileName() : "(none)");
-  display.print("DROP  "); display.println((unsigned long)sessionLog.dropped());
-  display.print("PRES  "); display.print(pressure, 1); display.println(" hPa");
+  display.print("GEEK LIVE "); display.print((unsigned long)(nowMs / 1000)); display.println("s");
+  display.drawFastHLine(0, 14, display.width(), ST77XX_BLUE);
+  int y = 18;
+  display.setCursor(4, y); display.print("GPS   "); display.println(gpsOk ? "OK" : "ABSENT"); y += 10;
+  display.setCursor(4, y); display.print("IMU   "); display.println(imuOk ? "OK" : "ABSENT"); y += 10;
+  display.setCursor(4, y); display.print("BARO  "); display.println(baroOk ? "OK" : "ABSENT"); y += 10;
+  display.setCursor(4, y); display.print("SD    "); display.println(sdOk ? "OK" : "ABSENT"); y += 10;
+  display.setCursor(4, y); display.print("LOG   "); display.println(sessionLog.active() ? "ACTIVE" : "INACTIVE"); y += 10;
+  display.setCursor(4, y); display.print("DROP  "); display.println((unsigned long)sessionLog.dropped()); y += 10;
+  display.setCursor(4, y); display.print("PRES  "); display.print(pressure, 1); display.println(" hPa");
 }
 
 void setupStorage() {
