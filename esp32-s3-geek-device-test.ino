@@ -18,22 +18,18 @@
 #include "AircraftAHRS.h"
 #include "FusionSessionLog.h"
 #include "SharedUbloxGPS.h"
+#include "HardwareAbstraction.h"
 
-// Waveshare-style ESP32-S3 Geek pinout. Verify against the board revision.
-// Pin map verified against the vendor ESP32-S3-GEEK demo sources.
-constexpr int LCD_SCLK = 12, LCD_MOSI = 11, LCD_CS = 10, LCD_DC = 8;
-constexpr int LCD_RST = 9, LCD_BL = 7;
-constexpr int I2C_SDA = 16, I2C_SCL = 17;
-// Exposed UART connector, cross-connected to the GPS module:
-// GEEK TX43 -> GPS RX, GEEK RX44 <- GPS TX.
-constexpr int GPS_TX = 43, GPS_RX = 44;
-constexpr int SD_CS = 34, SD_SCK = 36, SD_MISO = 37, SD_MOSI = 35;
-constexpr int LOG_BUTTON = 0;
+#if defined(HAL_HEADLESS)
+constexpr HalHardwareProfile HARDWARE = makeHeadlessProfile();
+#else
+constexpr HalHardwareProfile HARDWARE = makeGeekS3Profile();
+#endif
 constexpr uint32_t IMU_OUTPUT_PERIOD_US = 20000; // 50 Hz application stream
 
 // This is the LCD configuration from the last known-good pre-status-page
 // firmware.  Keep it unchanged until the panel is stable again.
-Adafruit_ST7789 display(LCD_CS, LCD_DC, LCD_RST);
+Adafruit_ST7789 display(HARDWARE.lcdCs, HARDWARE.lcdDc, HARDWARE.lcdRst);
 SPIClass sdSpi(HSPI);
 ReliableStreamESPNow espnow("GEEK", true /* alwaysBroadcast */);
 HardwareSerial gpsSerial(1);
@@ -72,7 +68,8 @@ bool bootLogSession = false;
 uint32_t bootLogDeadlineMs = 0;
 
 void setupDisplay() {
-  pinMode(LCD_BL, OUTPUT); digitalWrite(LCD_BL, HIGH);
+  if (HARDWARE.display == HalDisplayKind::None) return;
+  pinMode(HARDWARE.lcdBacklight, OUTPUT); digitalWrite(HARDWARE.lcdBacklight, HIGH);
   display.init(135, 240); display.setRotation(1); display.fillScreen(ST77XX_BLACK);
   display.setTextColor(ST77XX_WHITE, ST77XX_BLACK); display.setTextSize(2);
   display.setCursor(4, 4); display.println("ESP32-S3 Geek");
@@ -97,11 +94,12 @@ void updateDisplay(uint32_t nowMs, float pressure) {
 }
 
 void setupStorage() {
-  sdSpi.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
-  sdOk = SD.begin(SD_CS, sdSpi, 20000000);
+  if (!HARDWARE.hasSd) return;
+  sdSpi.begin(HARDWARE.sdSck, HARDWARE.sdMiso, HARDWARE.sdMosi, HARDWARE.sdCs);
+  sdOk = SD.begin(HARDWARE.sdCs, sdSpi, 20000000);
   if (sdOk) sessionLog.recoverLatest(SD);
   Serial.printf("microSD SPI SCK=%d MISO=%d MOSI=%d CS=%d: %s\n",
-                SD_SCK, SD_MISO, SD_MOSI, SD_CS, sdOk ? "OK" : "not detected");
+                HARDWARE.sdSck, HARDWARE.sdMiso, HARDWARE.sdMosi, HARDWARE.sdCs, sdOk ? "OK" : "not detected");
 }
 
 bool clearFusionLogs() {
@@ -135,7 +133,8 @@ void setupG5Logging() {
 }
 
 void updateLoggingButton() {
-  bool pressed = digitalRead(LOG_BUTTON) == LOW;
+  if (!HARDWARE.hasLogButton) return;
+  bool pressed = digitalRead(HARDWARE.logButton) == LOW;
   if (pressed != lastLogButton && millis() - logButtonChangedMs > 40) {
     logButtonChangedMs = millis(); lastLogButton = pressed;
     if (pressed) {
@@ -216,7 +215,7 @@ void dumpChunked(uint32_t startSeq = 0) {
 
 void handleSerialCommands() {
   auto scanI2c = []() {
-    Serial.println("I2C_SCAN_BEGIN SDA=16 SCL=17");
+    Serial.printf("I2C_SCAN_BEGIN SDA=%d SCL=%d\n", HARDWARE.i2cSda, HARDWARE.i2cScl);
     uint8_t found = 0;
     for (uint8_t address = 1; address < 0x78; ++address) {
       Wire.beginTransmission(address);
@@ -272,7 +271,7 @@ void setupBerryIMU() {
   // BMP280=0x76 (some modules strap the barometer to 0x77).
   // Waveshare's Geek I2C example uses GPIO16/17. Explicit pins are required:
   // the ESP32-S3 defaults can overlap the LCD's DC/RESET pins (8/9).
-  Wire.begin(I2C_SDA, I2C_SCL);
+  Wire.begin(HARDWARE.i2cSda, HARDWARE.i2cScl);
   Wire.setTimeOut(20); // Missing Qwiic hardware must never stall the test.
   Wire.beginTransmission(0x0D); // QMC5883L compass on the SEQURE GPS module.
   qmcOk = Wire.endTransmission() == 0;
@@ -336,7 +335,7 @@ bool readQmc5883p(float &x, float &y, float &z) {
 
 void setupGPS() {
   static const uint32_t candidates[] = {38400, 9600, 115200};
-  if (!sharedGps.begin(gpsSerial, GPS_RX, GPS_TX, candidates,
+  if (!sharedGps.begin(gpsSerial, HARDWARE.gpsRx, HARDWARE.gpsTx, candidates,
                        sizeof(candidates) / sizeof(candidates[0]))) {
     Serial.println("u-blox GNSS not detected on GPIO43/44");
     return;
@@ -365,7 +364,7 @@ void updateGPS(uint32_t nowMs) {
 void setup() {
   Serial.begin(115200); delay(500); Serial.println("ESP32-S3 Geek device test");
   Serial.println("Built in: LCD, microSD, WiFi/BLE, USB, UART, GPIO, I2C");
-  pinMode(LOG_BUTTON, INPUT_PULLUP);
+  if (HARDWARE.hasLogButton) pinMode(HARDWARE.logButton, INPUT_PULLUP);
   ahrs.setCompassCalibration(0, compass0Offset, compass0Calibration);
   ahrs.setCompassCalibration(1, compass1Offset, compass1Calibration);
   setupDisplay(); setupStorage(); setupBerryIMU(); setupGPS(); setupG5Logging();
