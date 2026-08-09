@@ -30,7 +30,7 @@ def read_exact(ser, size, deadline):
         if not chunk:
             continue
         data.extend(chunk)
-        if len(data) >= next_report or len(data) == size:
+        if size > 4096 and (len(data) >= next_report or len(data) == size):
             print(f"received {len(data)}/{size} bytes ({len(data) * 100 // size}%)",
                   flush=True)
             next_report += 256 * 1024
@@ -72,10 +72,9 @@ def main() -> int:
         payload = bytearray(); seq = 0
         crc = __import__('zlib').crc32
         while len(payload) < size:
-            ready = read_line(ser, deadline)
-            if not ready.startswith(b"LOG_CHUNK_READY "):
-                raise RuntimeError("bad chunk ready: " + ready.decode(errors="replace"))
             ser.write(f"GET {seq}\n".encode())
+            ser.flush()
+            time.sleep(0.10)
             header = read_line(ser, deadline)
             cm = re.match(rb"LOG_CHUNK (\d+) (\d+) ([0-9A-Fa-f]+)\n", header)
             if not cm: raise RuntimeError("bad chunk header: " + header.decode(errors="replace"))
@@ -83,9 +82,10 @@ def main() -> int:
             if got_seq != seq: raise RuntimeError("unexpected chunk sequence")
             data = read_exact(ser, length, deadline)
             if (crc(data) & 0xffffffff) != expected:
-                ser.write(f"NACK {seq}\n".encode()); raise RuntimeError(f"CRC mismatch on chunk {seq}")
-            payload.extend(data); ser.write(f"ACK {seq}\n".encode()); ser.flush(); seq += 1
-            print(f"received {len(payload)}/{size} bytes ({len(payload) * 100 // size}%)", flush=True)
+                raise RuntimeError(f"CRC mismatch on chunk {seq}")
+            payload.extend(data); seq += 1
+            if len(payload) % (256 * 1024) < length or len(payload) == size:
+                print(f"received {len(payload)}/{size} bytes ({len(payload) * 100 // size}%)", flush=True)
         end = read_line(ser, deadline)
         if not end.startswith(b"LOG_CHUNK_END "):
             raise RuntimeError("missing LOG_CHUNK_END")

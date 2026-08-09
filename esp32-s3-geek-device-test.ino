@@ -169,21 +169,14 @@ void dumpChunked() {
     size_t len = f.read(buf, chunkSize);
     if (!len) { size_t pos = f.position(); f.close(); Serial.printf("LOG_ERROR SD_READ seq=%lu pos=%lu\n", (unsigned long)seq, (unsigned long)pos); return; }
     String command;
-    for (;;) {
-      Serial.printf("LOG_CHUNK_READY %lu\n", (unsigned long)seq); Serial.flush();
-      if (!readSerialLine(command, 30000)) { f.close(); Serial.println("LOG_ERROR ACK_TIMEOUT"); return; }
-      if (command == (String("GET ") + seq)) break;
+    if (!readSerialLine(command, 30000) || command != (String("GET ") + seq)) {
+      f.close(); Serial.printf("LOG_ERROR GET_TIMEOUT seq=%lu\n", (unsigned long)seq); return;
     }
     uint32_t sum = crc.calc(buf, len);
     Serial.printf("LOG_CHUNK %lu %u %08lX\n", (unsigned long)seq, (unsigned)len, (unsigned long)sum);
     size_t sent = 0;
     while (sent < len) { size_t n = Serial.write(buf + sent, len - sent); if (n) sent += n; else { delay(1); yield(); } }
     Serial.flush();
-    for (;;) {
-      if (!readSerialLine(command, 30000)) { f.close(); Serial.println("LOG_ERROR ACK_TIMEOUT"); return; }
-      if (command == (String("ACK ") + seq)) break;
-      if (command == (String("NACK ") + seq)) { seq--; break; }
-    }
     seq++;
   }
   f.close(); Serial.printf("LOG_CHUNK_END %lu\n", (unsigned long)seq); Serial.flush();
