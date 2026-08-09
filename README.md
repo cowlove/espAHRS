@@ -7,7 +7,7 @@ The test initializes the 1.14-inch LCD, probes the TF/microSD slot, reports
 ESP32 flash/PSRAM, and sends a `ReliableStreamESPNow("GEEK")` diagnostic once
 per second.
 
-The BerryIMUv3 and SEQURE M10-25Q GPS are optional external Qwiic/I2C
+The BerryIMUv3, SparkFun Qwiic 9DoF (ICM-20948), and SEQURE M10-25Q GPS are optional external Qwiic/I2C
 peripherals. They are not required for the firmware to run. Missing sensors
 are reported as `ABSENT`, with a 20 ms I2C timeout.
 
@@ -33,6 +33,7 @@ Versions used during bring-up:
 | Adafruit GFX Library | 1.12.6 | Display drawing primitives |
 | Adafruit ST7735 and ST7789 Library | 1.11.0 | ST7789-class 240×135 LCD |
 | Adafruit LSM9DS1 Library | 2.2.1 | BerryIMUv3 accelerometer, gyro, magnetometer |
+| SparkFun ICM-20948 Arduino Library | current | SparkFun Qwiic 9DoF ICM-20948 accelerometer, gyro, magnetometer |
 | Adafruit BMP280 Library | 3.0.0 | BerryIMUv3 pressure/altitude |
 | Adafruit LIS3MDL | 1.2.5 | LSM9DS1 library dependency |
 | Adafruit BusIO | 1.17.4 | Adafruit sensor-library dependency |
@@ -69,6 +70,7 @@ Verified against the vendor ESP32-S3-GEEK demo sources: SCLK `12`, MOSI
 
 - LSM9DS1 accelerometer/gyro: `0x6B`
 - LSM9DS1 magnetometer: `0x1C`
+- ICM-20948: `0x68` or `0x69`, selected by the board's ADR link
 - BMP280: `0x76`, with fallback to `0x77`
 - Future GPS: not yet implemented; currently reported as `GPS=ABSENT`
 
@@ -80,6 +82,11 @@ The Geek test imports the shared fusion implementation from the sibling
 ```sh
 make FUSION_SHARED_DIR=../tbeam-supreme-device-test
 ```
+
+At startup the GEEK firmware probes the ICM-20948 at both possible addresses,
+then falls back to the LSM9DS1. The selected device's accelerometer, gyro, and
+magnetometer are normalized into the existing IMU and compass-0 log records;
+the device name is shown on the status display and serial startup line.
 
 This supplies `AircraftAHRS.h/.cpp` and `FusionSessionLog.h`. The same
 non-blocking logger records raw G5 ESP-NOW frames, decoded G5 packets, IMU

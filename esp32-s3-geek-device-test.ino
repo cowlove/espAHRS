@@ -11,6 +11,7 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_LSM9DS1.h>
 #include <Adafruit_BMP280.h>
+#include <ICM_20948.h>
 #include <espNowMux.h>
 #include <reliableStream.h>
 #include "AircraftAHRS.h"
@@ -35,7 +36,10 @@ SPIClass sdSpi(HSPI);
 ReliableStreamESPNow espnow("GEEK", true /* alwaysBroadcast */);
 HardwareSerial gpsSerial(1);
 Adafruit_LSM9DS1 imu;
+ICM_20948_I2C icm20948;
 Adafruit_BMP280 baro;
+enum class ImuKind { None, LSM9DS1, ICM20948 };
+ImuKind imuKind = ImuKind::None;
 bool displayOk = false, sdOk = false, imuOk = false, baroOk = false;
 bool gpsOk = false; // Reserved for the future Qwiic GPS module.
 AircraftAHRS ahrs;
@@ -63,7 +67,9 @@ void updateDisplay(uint32_t nowMs, float pressure) {
   display.drawFastHLine(0, 14, display.width(), ST77XX_BLUE);
   int y = 18;
   display.setCursor(4, y); display.print("GPS   "); display.println(gpsOk ? "OK" : "ABSENT"); y += 10;
-  display.setCursor(4, y); display.print("IMU   "); display.println(imuOk ? "OK" : "ABSENT"); y += 10;
+  display.setCursor(4, y); display.print("IMU   ");
+  display.println(imuKind == ImuKind::ICM20948 ? "ICM20948" :
+                  imuKind == ImuKind::LSM9DS1 ? "LSM9DS1" : "ABSENT"); y += 10;
   display.setCursor(4, y); display.print("BARO  "); display.println(baroOk ? "OK" : "ABSENT"); y += 10;
   display.setCursor(4, y); display.print("SD    "); display.println(sdOk ? "OK" : "ABSENT"); y += 10;
   display.setCursor(4, y); display.print("LOG   "); display.println(sessionLog.active() ? "ACTIVE" : "INACTIVE"); y += 10;
@@ -118,16 +124,30 @@ void setupBerryIMU() {
   // the ESP32-S3 defaults can overlap the LCD's DC/RESET pins (8/9).
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setTimeOut(20); // Missing Qwiic hardware must never stall the test.
-  imuOk = imu.begin();
+  // Prefer the newer SparkFun ICM-20948, then fall back to the BerryIMUv3
+  // LSM9DS1. ADR selects 0x68/0x69 on the ICM board; the library's ad0val
+  // argument maps directly to that address bit.
+  if (icm20948.begin(Wire, false) == ICM_20948_Stat_Ok) {
+    imuKind = ImuKind::ICM20948;
+    imuOk = true;
+  } else if (icm20948.begin(Wire, true) == ICM_20948_Stat_Ok) {
+    imuKind = ImuKind::ICM20948;
+    imuOk = true;
+  } else {
+    imuOk = imu.begin();
+    if (imuOk) imuKind = ImuKind::LSM9DS1;
+  }
   baroOk = baro.begin(0x76);
   if (!baroOk) baroOk = baro.begin(0x77);
-  if (imuOk) {
+  if (imuKind == ImuKind::LSM9DS1) {
     imu.setupAccel(imu.LSM9DS1_ACCELRANGE_4G, imu.LSM9DS1_ACCELDATARATE_119HZ);
     imu.setupMag(imu.LSM9DS1_MAGGAIN_4GAUSS);
     imu.setupGyro(imu.LSM9DS1_GYROSCALE_245DPS);
   }
-  Serial.printf("Qwiic GPS=%s BerryIMUv3 LSM9DS1=%s BMP280=%s\n",
-                gpsOk ? "OK" : "ABSENT", imuOk ? "OK" : "ABSENT", baroOk ? "OK" : "ABSENT");
+  Serial.printf("Qwiic GPS=%s IMU=%s BMP280=%s\n", gpsOk ? "OK" : "ABSENT",
+                imuKind == ImuKind::ICM20948 ? "ICM20948" :
+                imuKind == ImuKind::LSM9DS1 ? "LSM9DS1" : "ABSENT",
+                baroOk ? "OK" : "ABSENT");
 }
 
 void setup() {
@@ -152,25 +172,28 @@ void loop() {
   }
   if (imuOk) {
     sensors_event_t accel, gyro, mag;
-    imu.getEvent(&accel, &mag, &gyro, nullptr);
+    float ax, ay, az, gx, gy, gz, mx, my, mz;
+    if (imuKind == ImuKind::ICM20948) {
+      if (!icm20948.dataReady()) { delay(1); return; }
+      icm20948.getAGMT();
+      ax = icm20948.accX() * 9.80665f; ay = icm20948.accY() * 9.80665f; az = icm20948.accZ() * 9.80665f;
+      gx = icm20948.gyrX(); gy = icm20948.gyrY(); gz = icm20948.gyrZ();
+      mx = icm20948.magX(); my = icm20948.magY(); mz = icm20948.magZ();
+    } else {
+      imu.getEvent(&accel, &mag, &gyro, nullptr);
+      ax = accel.acceleration.x; ay = accel.acceleration.y; az = accel.acceleration.z;
+      gx = gyro.gyro.x * 57.2957795f; gy = gyro.gyro.y * 57.2957795f; gz = gyro.gyro.z * 57.2957795f;
+      mx = mag.magnetic.x; my = mag.magnetic.y; mz = mag.magnetic.z;
+    }
     uint64_t nowUs = micros();
-    bool imuSampleValid = isfinite(accel.acceleration.x) &&
-      isfinite(accel.acceleration.y) && isfinite(accel.acceleration.z) &&
-      isfinite(gyro.gyro.x) && isfinite(gyro.gyro.y) && isfinite(gyro.gyro.z);
-    bool compass0Valid = isfinite(mag.magnetic.x) && isfinite(mag.magnetic.y) &&
-      isfinite(mag.magnetic.z);
+    bool imuSampleValid = isfinite(ax) && isfinite(ay) && isfinite(az) && isfinite(gx) && isfinite(gy) && isfinite(gz);
+    bool compass0Valid = isfinite(mx) && isfinite(my) && isfinite(mz);
     if (sessionLog.active()) sessionLog.appendImu(nowUs,
-      gyro.gyro.x * 57.2957795f, gyro.gyro.y * 57.2957795f,
-      gyro.gyro.z * 57.2957795f, accel.acceleration.x,
-      accel.acceleration.y, accel.acceleration.z, imuSampleValid);
+      gx, gy, gz, ax, ay, az, imuSampleValid);
     if (sessionLog.active()) sessionLog.appendCompass(0, nowUs,
-      mag.magnetic.x, mag.magnetic.y, mag.magnetic.z, compass0Valid);
-    ahrs.updateImu(gyro.gyro.x * 57.2957795f, gyro.gyro.y * 57.2957795f,
-                   gyro.gyro.z * 57.2957795f, nowUs,
-                   accel.acceleration.x, accel.acceleration.y,
-                   accel.acceleration.z, imuSampleValid);
-    ahrs.updateCompass(0, mag.magnetic.x, mag.magnetic.y,
-                       mag.magnetic.z, compass0Valid, millis());
+      mx, my, mz, compass0Valid);
+    ahrs.updateImu(gx, gy, gz, nowUs, ax, ay, az, imuSampleValid);
+    ahrs.updateCompass(0, mx, my, mz, compass0Valid, millis());
   }
   if (baroOk) {
     float pressurePa = baro.readPressure();
@@ -183,8 +206,6 @@ void loop() {
   if (millis() - last >= 1000) {
     last = millis();
     char packet[128];
-    sensors_event_t accel, gyro, mag;
-    if (imuOk) imu.getEvent(&accel, &mag, &gyro, nullptr);
     float pressure = baroOk ? baro.readPressure() / 100.0f : 0.0f;
     snprintf(packet, sizeof(packet), "GEEK TEST=1 MILLIS=%lu LCD=%s SD=%s GPS=%s IMU=%s BARO=%s P=%.1f\n",
              (unsigned long)last, displayOk ? "OK" : "FAIL", sdOk ? "OK" : "ABSENT",
