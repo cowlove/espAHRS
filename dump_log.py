@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Download the most recent completed GEEK session log over USB serial."""
 import argparse
+import os
 import re
 import sys
 import time
@@ -60,55 +61,52 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=300.0,
                     help="overall transfer timeout in seconds")
     ap.add_argument("--trace", help="write protocol trace lines to this file")
+    ap.add_argument("--resume", action="store_true", help="resume an existing .part file")
+    ap.add_argument("--attempts", type=int, default=8)
     args = ap.parse_args()
-
-    with serial.Serial(args.port, 115200, timeout=2) as ser:
-        trace = open(args.trace, "w") if args.trace else None
-        def log(direction, data):
-            if trace:
-                trace.write(f"{direction} {data!r}\n"); trace.flush()
-        deadline = time.monotonic() + args.timeout
-        ser.write(b"DUMP\n")
-        log("TX", b"DUMP\\n")
-        line = read_protocol_line(ser, b"LOG_CHUNK_BEGIN ", deadline)
-        match = re.match(rb"LOG_CHUNK_BEGIN (\d+) (\d+)\n", line)
-        if not match:
-            raise RuntimeError("bad response: " + line.decode(errors="replace"))
-        size, chunk_size = int(match.group(1)), int(match.group(2))
-        payload = bytearray(); seq = 0
-        crc = __import__('zlib').crc32
-        while len(payload) < size:
-            header = None
-            for attempt in range(4):
-                ser.write(f"GET {seq}\n".encode()); ser.flush(); time.sleep(0.10)
-                log("TX", f"GET {seq}\\n".encode())
-                marker = read_protocol_line(ser, b"LOG_GET_OK ", deadline)
-                if not marker.startswith(f"LOG_GET_OK {seq}".encode()):
-                    continue
-                try:
-                    header = read_line(ser, deadline)
-                    break
-                except TimeoutError:
-                    if attempt == 3: raise
-            if header is None:
-                raise TimeoutError(f"no response to GET {seq}")
-            cm = re.match(rb"LOG_CHUNK (\d+) (\d+) ([0-9A-Fa-f]+)\n", header)
-            if not cm: raise RuntimeError("bad chunk header: " + header.decode(errors="replace"))
-            got_seq, length, expected = int(cm.group(1)), int(cm.group(2)), int(cm.group(3), 16)
-            if got_seq != seq: raise RuntimeError("unexpected chunk sequence")
-            data = read_exact(ser, length, deadline)
-            if (crc(data) & 0xffffffff) != expected:
-                raise RuntimeError(f"CRC mismatch on chunk {seq}")
-            payload.extend(data); seq += 1
-            if len(payload) % (256 * 1024) < length or len(payload) == size:
-                print(f"received {len(payload)}/{size} bytes ({len(payload) * 100 // size}%)", flush=True)
-        end = read_line(ser, deadline)
-        if not end.startswith(b"LOG_CHUNK_END "):
-            raise RuntimeError("missing LOG_CHUNK_END")
-        with open(args.output, "wb") as out:
-            out.write(payload)
-        if trace: trace.close()
-        print(f"saved {len(payload)} bytes to {args.output}")
+    part = args.output + ".part"
+    if not args.resume and os.path.exists(part): os.remove(part)
+    started = time.monotonic(); size = None; chunk_size = 64
+    for attempt in range(args.attempts):
+        if time.monotonic() - started >= args.timeout: break
+        existing = os.path.getsize(part) if os.path.exists(part) else 0
+        if existing % chunk_size: raise RuntimeError("partial file is not chunk aligned")
+        seq = existing // chunk_size
+        try:
+            with serial.Serial(args.port, 115200, timeout=2) as ser:
+                deadline = started + args.timeout
+                trace = open(args.trace, "a") if args.trace else None
+                def log(direction, data):
+                    if trace: trace.write(f"{direction} {data!r}\n"); trace.flush()
+                command = f"DUMP {seq}\n".encode() if seq else b"DUMP\n"
+                ser.write(command); ser.flush(); log("TX", command)
+                line = read_protocol_line(ser, b"LOG_CHUNK_BEGIN ", deadline)
+                match = re.match(rb"LOG_CHUNK_BEGIN (\d+) (\d+)\n", line)
+                if not match: raise RuntimeError("bad response: " + line.decode(errors="replace"))
+                size, chunk_size = int(match.group(1)), int(match.group(2))
+                if existing != seq * chunk_size: raise RuntimeError("resume chunk size changed")
+                with open(part, "ab") as out:
+                    crc = __import__('zlib').crc32
+                    while existing < size:
+                        ser.write(f"GET {seq}\n".encode()); ser.flush(); time.sleep(.1); log("TX", f"GET {seq}\n".encode())
+                        read_protocol_line(ser, b"LOG_GET_OK ", deadline)
+                        header = read_line(ser, deadline)
+                        cm = re.match(rb"LOG_CHUNK (\d+) (\d+) ([0-9A-Fa-f]+)\n", header)
+                        if not cm: raise RuntimeError("bad chunk header")
+                        got, length, expected = int(cm.group(1)), int(cm.group(2)), int(cm.group(3), 16)
+                        if got != seq: raise RuntimeError("unexpected chunk sequence")
+                        data = read_exact(ser, length, deadline)
+                        if (crc(data) & 0xffffffff) != expected: raise RuntimeError(f"CRC mismatch chunk {seq}")
+                        out.write(data); out.flush(); existing += length; seq += 1
+                        if existing % (256 * 1024) < length or existing == size: print(f"received {existing}/{size} bytes ({existing * 100 // size}%)", flush=True)
+                end = read_line(ser, deadline)
+                if not end.startswith(b"LOG_CHUNK_END "): raise RuntimeError("missing LOG_CHUNK_END")
+                if trace: trace.close()
+                os.replace(part, args.output); print(f"saved {existing} bytes to {args.output}"); return 0
+        except (OSError, TimeoutError, RuntimeError) as exc:
+            print(f"attempt {attempt + 1}/{args.attempts} paused at chunk {seq}: {exc}", file=sys.stderr)
+            time.sleep(1)
+    raise TimeoutError("resume attempts exhausted; partial file retained as " + part)
     return 0
 
 
