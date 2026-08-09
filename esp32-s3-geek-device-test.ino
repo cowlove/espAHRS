@@ -50,7 +50,7 @@ void updateDisplay(uint32_t nowMs, float pressure) {
 
   // Keep the known-good controller initialization above. Only the drawing
   // changes here; use explicit positions so text cannot wrap unexpectedly.
-  display.fillRect(0, 0, display.width(), display.height(), ST77XX_BLACK);
+  display.fillScreen(ST77XX_BLACK);
   display.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
   display.setTextSize(1);
   display.setCursor(4, 4);
@@ -179,6 +179,7 @@ void loop() {
                   fused.rollDeg, fused.pitchDeg, fused.headingDeg,
                   fused.fusedAltitudeM, fused.fusedClimbRateMps);
     updateDisplay(last, pressure);
+    Serial.printf("DISPLAY UPDATE %lu\n", (unsigned long)(last / 1000));
   }
   delay(1);
 }
