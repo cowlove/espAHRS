@@ -1,11 +1,15 @@
 #include "AircraftAHRS.h"
 #include "FusionLogFormat.h"
+#include "ReplayConfig.h"
 
 #include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <vector>
+#include <algorithm>
+#include <cmath>
 
 static constexpr uint32_t LogMagic = 0x31474F4CUL;
 
@@ -25,19 +29,70 @@ static uint32_t msFromUs(uint64_t us) {
     return static_cast<uint32_t>(us / 1000ULL);
 }
 
+struct ErrorMetric {
+    std::vector<double> absErrors;
+    double sum = 0, sumSq = 0, signedSum = 0, maximum = 0;
+    void add(double error) {
+        double a = std::fabs(error); absErrors.push_back(a);
+        sum += a; sumSq += error * error; signedSum += error;
+        maximum = std::max(maximum, a);
+    }
+    void print(const char *name) const {
+        if (absErrors.empty()) { std::printf("ERROR %s count=0\n", name); return; }
+        auto sorted = absErrors; std::sort(sorted.begin(), sorted.end());
+        double p95 = sorted[(sorted.size() - 1) * 95 / 100];
+        std::printf("ERROR %s count=%zu bias=%.4f mae=%.4f rmse=%.4f max=%.4f p95=%.4f\n",
+                    name, absErrors.size(), signedSum / absErrors.size(),
+                    sum / absErrors.size(), std::sqrt(sumSq / absErrors.size()),
+                    maximum, p95);
+    }
+};
+
+static bool g5Field(const uint8_t *payload, uint32_t length, const char *key, float &value) {
+    std::string text(reinterpret_cast<const char *>(payload), length);
+    std::string needle = std::string(key) + "=";
+    size_t begin = 0;
+    while ((begin = text.find(needle, begin)) != std::string::npos) {
+        if (begin && text[begin - 1] != ' ' && text[begin - 1] != '\n' && text[begin - 1] != '\r') { begin += needle.size(); continue; }
+        char *end = nullptr;
+        value = std::strtof(text.c_str() + begin + needle.size(), &end);
+        if (end != text.c_str() + begin + needle.size()) return std::isfinite(value);
+        begin += needle.size();
+    }
+    return false;
+}
+
+static float angleError(float estimate, float reference) {
+    float e = std::fmod(estimate - reference + 540.0f, 360.0f) - 180.0f;
+    return e;
+}
+
 int main(int argc, char **argv) {
-    if (argc != 2) {
-        std::fprintf(stderr, "usage: %s session.bin\n", argv[0]);
+    if (argc < 2) {
+        std::fprintf(stderr, "usage: %s session.bin [--param name=value] [--list-params]\n", argv[0]);
         return 2;
+    }
+    ReplayConfig replayConfig;
+    for (int i = 2; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--list-params") == 0) { ReplayConfig::list(); return 0; }
+        if (std::strcmp(argv[i], "--param") == 0 && i + 1 < argc) ++i;
+        else if (std::strncmp(argv[i], "--param=", 8) == 0) argv[i] += 8;
+        else { std::fprintf(stderr, "unknown option: %s\n", argv[i]); return 2; }
+        char *equals = std::strchr(argv[i], '=');
+        if (!equals) { std::fprintf(stderr, "parameter must be name=value\n"); return 2; }
+        *equals = '\0'; float value = std::strtof(equals + 1, nullptr);
+        if (!replayConfig.set(argv[i], value)) { std::fprintf(stderr, "unknown parameter: %s\n", argv[i]); return 2; }
     }
     std::ifstream in(argv[1], std::ios::binary);
     if (!in) { std::perror(argv[1]); return 1; }
 
-    AircraftAHRS ahrs;
+    AircraftAHRS ahrs(replayConfig.ahrs);
     uint64_t records = 0, bytes = 0;
     uint32_t lastMs = 0;
     uint32_t expectedSequence = 0, sequenceGaps = 0, sequenceDuplicates = 0;
     uint32_t firstSequenceAnomaly = UINT32_MAX;
+    ErrorMetric rollError, pitchError, headingError;
+    uint32_t g5Parsed = 0;
     uint32_t counts[9] = {};
     ReplayHeader h{};
     while (in.read(reinterpret_cast<char *>(&h), sizeof(h))) {
@@ -86,9 +141,28 @@ int main(int argc, char **argv) {
             ahrs.updateBaro(r.altitudeM, r.valid != 0, nowMs);
             break;
         }
+        case FUSION_LOG_GPS: {
+            if (h.payloadLength != sizeof(FusionGpsRecord)) return 1;
+            FusionGpsRecord r; std::memcpy(&r, payload, sizeof(r));
+            ahrs.updateGps(r.headingE5 * 1.0e-5f, r.groundSpeedMmps * 1.0e-3f,
+                           r.altitudeMm * 1.0e-3f, r.fixValid != 0, nowMs);
+            break;
+        }
         default:
-            // Events, GPS, and G5 reference records are retained in the log;
-            // only normalized sensor records drive this first replay pass.
+            if (h.type == FUSION_LOG_G5_PACKET) {
+                float g5Roll, g5Pitch, g5Heading;
+                bool haveRoll = g5Field(payload, h.payloadLength, "R", g5Roll);
+                bool havePitch = g5Field(payload, h.payloadLength, "P", g5Pitch);
+                bool haveHeading = g5Field(payload, h.payloadLength, "HDG", g5Heading);
+                if (haveRoll || havePitch || haveHeading) {
+                    const auto &state = ahrs.state(nowMs);
+                    if (haveRoll) rollError.add(state.rollDeg - g5Roll);
+                    if (havePitch) pitchError.add(state.pitchDeg - g5Pitch);
+                    if (haveHeading) headingError.add(angleError(state.headingDeg,
+                                                                  g5Heading + replayConfig.g5HeadingOffsetDeg));
+                    ++g5Parsed;
+                }
+            }
             break;
         }
     }
@@ -102,6 +176,8 @@ int main(int argc, char **argv) {
     std::printf("SEQUENCE gaps=%u duplicates=%u first_anomaly=%s\n",
                 sequenceGaps, sequenceDuplicates,
                 firstSequenceAnomaly == UINT32_MAX ? "none" : std::to_string(firstSequenceAnomaly).c_str());
+    std::printf("G5_REFERENCE parsed=%u\n", g5Parsed);
+    rollError.print("roll_deg"); pitchError.print("pitch_deg"); headingError.print("heading_deg");
     std::printf("STATE roll=%.3f pitch=%.3f heading=%.3f compass=%.3f valid=%d\n",
                 s.rollDeg, s.pitchDeg, s.headingDeg, s.fusedCompassHeadingDeg,
                 s.compassAidingValid ? 1 : 0);
