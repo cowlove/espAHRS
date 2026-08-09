@@ -197,7 +197,7 @@ void updateLoggingButton() {
                       (unsigned long)sessionLog.dropped(),
                       (unsigned long)sessionLog.writeErrors(),
                       (unsigned long)discardedG5NmeaPackets);
-      } else if (sdOk && sessionLog.begin(SD)) {
+      } else if (sdOk && (discardedG5NmeaPackets = 0, sessionLog.begin(SD))) {
         bootLogSession = false;
         Serial.println("SESSION_LOG STARTED");
       } else {
@@ -289,7 +289,7 @@ void handleSerialCommands() {
       command.trim();
       if (command.equalsIgnoreCase("START_LOG")) {
         if (sessionLog.active()) Serial.println("LOG_ERROR ACTIVE");
-        else if (sdOk && sessionLog.begin(SD)) Serial.println("SESSION_LOG STARTED");
+        else if (sdOk && (discardedG5NmeaPackets = 0, sessionLog.begin(SD))) Serial.println("SESSION_LOG STARTED");
         else Serial.println("SESSION_LOG START FAILED");
       } else if (command.equalsIgnoreCase("STOP_LOG")) {
         if (!sessionLog.active()) Serial.println("LOG_ERROR INACTIVE");
