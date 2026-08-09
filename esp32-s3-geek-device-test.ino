@@ -138,6 +138,22 @@ void updateBootLogging() {
 }
 
 void handleSerialCommands() {
+  auto scanI2c = []() {
+    Serial.println("I2C_SCAN_BEGIN SDA=16 SCL=17");
+    uint8_t found = 0;
+    for (uint8_t address = 1; address < 0x78; ++address) {
+      Wire.beginTransmission(address);
+      uint8_t error = Wire.endTransmission();
+      if (error == 0) {
+        Serial.printf("I2C_DEVICE address=0x%02X%s\n", address,
+                      address == 0x0D ? " QMC5883L_EXPECTED" : "");
+        ++found;
+      }
+      delay(1);
+    }
+    Serial.printf("I2C_SCAN_END count=%u QMC=%s\n", found,
+                  qmcOk ? "OK" : "ABSENT");
+  };
   static String command;
   while (Serial.available()) {
     char c = (char)Serial.read();
@@ -155,6 +171,8 @@ void handleSerialCommands() {
           Serial.flush();
           Serial.printf("\nLOG_END %lu\n", (unsigned long)sent);
         }
+      } else if (command.equalsIgnoreCase("SCAN")) {
+        scanI2c();
       } else if (command.length()) {
         Serial.println("LOG_ERROR UNKNOWN_COMMAND");
       }
