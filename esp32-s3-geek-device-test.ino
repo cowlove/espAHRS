@@ -48,6 +48,22 @@ bool gpsOk = false;
 uint8_t gpsFixQuality = 0;
 SharedUbloxGPS sharedGps;
 AircraftAHRS ahrs;
+
+const float compass0Offset[3] = {-37.4412f, -2.7410f, -9.2134f};
+const float compass0Calibration[3][3] = {
+  {0.02139609f, 0.00013715f, 0.00008128f},
+  {0.00013715f, 0.02186670f, -0.00068774f},
+  {0.00008128f, -0.00068774f, 0.02277121f}
+};
+const float compass1Offset[3] = {149.5027f, 88.4811f, -73.3429f};
+// The measured board relationship is a 180-degree rotation about X:
+// C0 ~= (C1 X, -C1 Y, -C1 Z). The ellipsoid matrix is composed with that
+// polarity correction here, while the logger continues to store raw values.
+const float compass1Calibration[3][3] = {
+  {0.00200813f, -0.00000361f, -0.00005624f},
+  {0.00000361f, -0.00209991f, 0.00003358f},
+  {0.00005624f, 0.00003358f, -0.00219467f}
+};
 ReliableStreamESPNow g5("G5", true /* incoming benchmark traffic */);
 FusionSessionLog sessionLog;
 bool lastLogButton = true;
@@ -350,6 +366,8 @@ void setup() {
   Serial.begin(115200); delay(500); Serial.println("ESP32-S3 Geek device test");
   Serial.println("Built in: LCD, microSD, WiFi/BLE, USB, UART, GPIO, I2C");
   pinMode(LOG_BUTTON, INPUT_PULLUP);
+  ahrs.setCompassCalibration(0, compass0Offset, compass0Calibration);
+  ahrs.setCompassCalibration(1, compass1Offset, compass1Calibration);
   setupDisplay(); setupStorage(); setupBerryIMU(); setupGPS(); setupG5Logging();
   qmcPOk = setupQmc5883p();
   Serial.printf("LCD=%s SD=%s GPS=%s QMC=%s IMU=%s BARO=%s flash=%uMB PSRAM=%s\n", displayOk ? "OK" : "FAIL",
