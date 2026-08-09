@@ -70,7 +70,10 @@ def main() -> int:
     args = ap.parse_args()
     part = args.output + ".part"
     if not args.resume and os.path.exists(part): os.remove(part)
-    started = time.monotonic(); size = None; chunk_size = 64
+    # Must match the firmware for calculating a resume sequence before the
+    # device sends LOG_CHUNK_BEGIN. A .part from the old 64-byte test mode
+    # should be removed before starting a new transfer.
+    started = time.monotonic(); size = None; chunk_size = 256
     for attempt in range(args.attempts):
         if time.monotonic() - started >= args.timeout: break
         existing = os.path.getsize(part) if os.path.exists(part) else 0

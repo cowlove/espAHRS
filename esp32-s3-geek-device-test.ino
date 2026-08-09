@@ -156,9 +156,10 @@ bool readSerialLine(String &line, uint32_t timeoutMs) {
 }
 
 void dumpChunked(uint32_t startSeq = 0) {
-  // Small diagnostic chunks keep USB CDC buffering and SD read failures
-  // independently observable. Increase only after the ACK path is proven.
-  const uint32_t chunkSize = 64;
+  // Host-driven half-duplex plus CRC makes a 256-byte payload a good balance:
+  // fewer transactions than the diagnostic 64-byte mode, while remaining
+  // comfortably below the USB CDC buffering failure seen with raw streaming.
+  const uint32_t chunkSize = 256;
   File f = sessionLog.openRead();
   if (!f) {
     Serial.printf("LOG_ERROR OPEN name=%s size_probe=%lu\n", sessionLog.fileName(),
