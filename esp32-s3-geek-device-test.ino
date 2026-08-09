@@ -48,22 +48,15 @@ void setupDisplay() {
 void updateDisplay(uint32_t nowMs, float pressure) {
   if (!displayOk) return;
 
-  // Keep the known-good controller initialization above. Only the drawing
-  // changes here; use explicit positions so text cannot wrap unexpectedly.
-  display.fillScreen(ST77XX_BLACK);
-  display.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-  display.setTextSize(1);
+  // Minimal live-write test: overwrite the proven static title area. This
+  // avoids any new clear/window/rotation behavior while proving the panel is
+  // accepting writes after setup().
+  display.setTextSize(2);
+  display.setTextColor(ST77XX_BLACK, ST77XX_BLACK);
+  display.setCursor(4, 4); display.println("ESP32-S3 Geek");
   display.setCursor(4, 4);
-  display.print("GEEK LIVE "); display.print((unsigned long)(nowMs / 1000)); display.println("s");
-  display.drawFastHLine(0, 14, display.width(), ST77XX_BLUE);
-  int y = 18;
-  display.setCursor(4, y); display.print("GPS   "); display.println(gpsOk ? "OK" : "ABSENT"); y += 10;
-  display.setCursor(4, y); display.print("IMU   "); display.println(imuOk ? "OK" : "ABSENT"); y += 10;
-  display.setCursor(4, y); display.print("BARO  "); display.println(baroOk ? "OK" : "ABSENT"); y += 10;
-  display.setCursor(4, y); display.print("SD    "); display.println(sdOk ? "OK" : "ABSENT"); y += 10;
-  display.setCursor(4, y); display.print("LOG   "); display.println(sessionLog.active() ? "ACTIVE" : "INACTIVE"); y += 10;
-  display.setCursor(4, y); display.print("DROP  "); display.println((unsigned long)sessionLog.dropped()); y += 10;
-  display.setCursor(4, y); display.print("PRES  "); display.print(pressure, 1); display.println(" hPa");
+  display.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  display.print("LIVE "); display.print((unsigned long)(nowMs / 1000)); display.println("s");
 }
 
 void setupStorage() {
