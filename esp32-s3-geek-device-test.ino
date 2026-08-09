@@ -42,7 +42,7 @@ ICM_20948_I2C icm20948;
 Adafruit_BMP280 baro;
 enum class ImuKind { None, LSM9DS1, ICM20948 };
 ImuKind imuKind = ImuKind::None;
-bool displayOk = false, sdOk = false, imuOk = false, baroOk = false;
+bool displayOk = false, sdOk = false, imuOk = false, baroOk = false, qmcOk = false;
 bool gpsOk = false;
 SharedUbloxGPS sharedGps;
 AircraftAHRS ahrs;
@@ -72,6 +72,7 @@ void updateDisplay(uint32_t nowMs, float pressure) {
   display.drawFastHLine(0, 14, display.width(), ST77XX_BLUE);
   int y = 18;
   display.setCursor(4, y); display.print("GPS   "); display.println(gpsOk ? "OK" : "ABSENT"); y += 10;
+  display.setCursor(4, y); display.print("QMC   "); display.println(qmcOk ? "OK" : "ABSENT"); y += 10;
   display.setCursor(4, y); display.print("IMU   ");
   display.println(imuKind == ImuKind::ICM20948 ? "ICM20948" :
                   imuKind == ImuKind::LSM9DS1 ? "LSM9DS1" : "ABSENT"); y += 10;
@@ -171,6 +172,9 @@ void setupBerryIMU() {
   // the ESP32-S3 defaults can overlap the LCD's DC/RESET pins (8/9).
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setTimeOut(20); // Missing Qwiic hardware must never stall the test.
+  Wire.beginTransmission(0x0D); // QMC5883L compass on the SEQURE GPS module.
+  qmcOk = Wire.endTransmission() == 0;
+  Serial.printf("QMC5883L I2C address=0x0D: %s\n", qmcOk ? "OK" : "not detected");
   // Prefer the newer SparkFun ICM-20948, then fall back to the BerryIMUv3
   // LSM9DS1. ADR selects 0x68/0x69 on the ICM board; the library's ad0val
   // argument maps directly to that address bit.
@@ -191,7 +195,8 @@ void setupBerryIMU() {
     imu.setupMag(imu.LSM9DS1_MAGGAIN_4GAUSS);
     imu.setupGyro(imu.LSM9DS1_GYROSCALE_245DPS);
   }
-  Serial.printf("Qwiic GPS=%s IMU=%s BMP280=%s\n", gpsOk ? "OK" : "ABSENT",
+  Serial.printf("Qwiic GPS=%s QMC=%s IMU=%s BMP280=%s\n", gpsOk ? "OK" : "ABSENT",
+                qmcOk ? "OK" : "ABSENT",
                 imuKind == ImuKind::ICM20948 ? "ICM20948" :
                 imuKind == ImuKind::LSM9DS1 ? "LSM9DS1" : "ABSENT",
                 baroOk ? "OK" : "ABSENT");
@@ -229,8 +234,9 @@ void setup() {
   Serial.println("Built in: LCD, microSD, WiFi/BLE, USB, UART, GPIO, I2C");
   pinMode(LOG_BUTTON, INPUT_PULLUP);
   setupDisplay(); setupStorage(); setupBerryIMU(); setupGPS(); setupG5Logging();
-  Serial.printf("LCD=%s SD=%s GPS=%s IMU=%s BARO=%s flash=%uMB PSRAM=%s\n", displayOk ? "OK" : "FAIL",
-                sdOk ? "OK" : "ABSENT", gpsOk ? "OK" : "ABSENT", imuOk ? "OK" : "ABSENT", baroOk ? "OK" : "ABSENT",
+  Serial.printf("LCD=%s SD=%s GPS=%s QMC=%s IMU=%s BARO=%s flash=%uMB PSRAM=%s\n", displayOk ? "OK" : "FAIL",
+                sdOk ? "OK" : "ABSENT", gpsOk ? "OK" : "ABSENT", qmcOk ? "OK" : "ABSENT",
+                imuOk ? "OK" : "ABSENT", baroOk ? "OK" : "ABSENT",
                 ESP.getFlashChipSize() / 1048576,
                 psramFound() ? "YES" : "NO");
   if (sdOk && sessionLog.begin(SD)) {
@@ -296,9 +302,10 @@ void loop() {
     last = millis();
     char packet[128];
     float pressure = baroOk ? baro.readPressure() / 100.0f : 0.0f;
-    snprintf(packet, sizeof(packet), "GEEK TEST=1 MILLIS=%lu LCD=%s SD=%s GPS=%s IMU=%s BARO=%s P=%.1f\n",
+    snprintf(packet, sizeof(packet), "GEEK TEST=1 MILLIS=%lu LCD=%s SD=%s GPS=%s QMC=%s IMU=%s BARO=%s P=%.1f\n",
              (unsigned long)last, displayOk ? "OK" : "FAIL", sdOk ? "OK" : "ABSENT",
-             gpsOk ? "OK" : "ABSENT", imuOk ? "OK" : "ABSENT", baroOk ? "OK" : "ABSENT", pressure);
+             gpsOk ? "OK" : "ABSENT", qmcOk ? "OK" : "ABSENT", imuOk ? "OK" : "ABSENT",
+             baroOk ? "OK" : "ABSENT", pressure);
     espnow.write(packet, true);
     Serial.print(packet);
     const AircraftAHRS::State &fused = ahrs.state(millis());
