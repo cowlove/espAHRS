@@ -159,7 +159,8 @@ void dumpChunked(uint32_t startSeq = 0) {
   // independently observable. Increase only after the ACK path is proven.
   const uint32_t chunkSize = 64;
   size_t totalSize = sessionLog.fileSize();
-  File f = SD.open(sessionLog.fileName(), FILE_READ);
+  Serial.printf("LOG_FILE name=%s size=%lu\n", sessionLog.fileName(), (unsigned long)totalSize);
+  File f = sessionLog.openRead();
   if (!f) { Serial.println("LOG_ERROR OPEN"); return; }
   if (!f.seek((size_t)startSeq * chunkSize)) { f.close(); Serial.println("LOG_ERROR SEEK"); return; }
   Arduino_CRC32 crc;
