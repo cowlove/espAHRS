@@ -170,8 +170,10 @@ void dumpChunked() {
     if (!len) { size_t pos = f.position(); f.close(); Serial.printf("LOG_ERROR SD_READ seq=%lu pos=%lu\n", (unsigned long)seq, (unsigned long)pos); return; }
     String command;
     uint32_t deadline = millis() + 30000;
+    Serial.printf("LOG_WAIT %lu\n", (unsigned long)seq); Serial.flush();
     while ((int32_t)(deadline - millis()) > 0) {
       if (!readSerialLine(command, 1000)) continue;
+      Serial.printf("LOG_RX %s\n", command.c_str()); Serial.flush();
       if (command == (String("GET ") + seq)) break;
     }
     if (command != (String("GET ") + seq)) {

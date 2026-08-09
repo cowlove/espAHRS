@@ -59,11 +59,17 @@ def main() -> int:
     ap.add_argument("--output", default="downloaded-fusion-log.bin")
     ap.add_argument("--timeout", type=float, default=300.0,
                     help="overall transfer timeout in seconds")
+    ap.add_argument("--trace", help="write protocol trace lines to this file")
     args = ap.parse_args()
 
     with serial.Serial(args.port, 115200, timeout=2) as ser:
+        trace = open(args.trace, "w") if args.trace else None
+        def log(direction, data):
+            if trace:
+                trace.write(f"{direction} {data!r}\n"); trace.flush()
         deadline = time.monotonic() + args.timeout
         ser.write(b"DUMP\n")
+        log("TX", b"DUMP\\n")
         line = read_protocol_line(ser, b"LOG_CHUNK_BEGIN ", deadline)
         match = re.match(rb"LOG_CHUNK_BEGIN (\d+) (\d+)\n", line)
         if not match:
@@ -75,6 +81,7 @@ def main() -> int:
             header = None
             for attempt in range(4):
                 ser.write(f"GET {seq}\n".encode()); ser.flush(); time.sleep(0.10)
+                log("TX", f"GET {seq}\\n".encode())
                 marker = read_protocol_line(ser, b"LOG_GET_OK ", deadline)
                 if not marker.startswith(f"LOG_GET_OK {seq}".encode()):
                     continue
@@ -100,6 +107,7 @@ def main() -> int:
             raise RuntimeError("missing LOG_CHUNK_END")
         with open(args.output, "wb") as out:
             out.write(payload)
+        if trace: trace.close()
         print(f"saved {len(payload)} bytes to {args.output}")
     return 0
 
