@@ -49,15 +49,20 @@ void setupDisplay() {
 void updateDisplay(uint32_t nowMs, float pressure) {
   if (!displayOk) return;
 
-  // Minimal live-write test: overwrite the proven static title area. This
-  // avoids any new clear/window/rotation behavior while proving the panel is
-  // accepting writes after setup().
-  display.setTextSize(2);
-  display.setTextColor(ST77XX_BLACK, ST77XX_BLACK);
-  display.setCursor(4, 4); display.println("ESP32-S3 Geek");
-  display.setCursor(4, 4);
+  display.fillScreen(ST77XX_BLACK);
   display.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-  display.print("LIVE "); display.print((unsigned long)(nowMs / 1000)); display.println("s");
+  display.setTextSize(1);
+  display.setCursor(4, 4);
+  display.print("GEEK LIVE "); display.print((unsigned long)(nowMs / 1000)); display.println("s");
+  display.drawFastHLine(0, 14, display.width(), ST77XX_BLUE);
+  int y = 18;
+  display.setCursor(4, y); display.print("GPS   "); display.println(gpsOk ? "OK" : "ABSENT"); y += 10;
+  display.setCursor(4, y); display.print("IMU   "); display.println(imuOk ? "OK" : "ABSENT"); y += 10;
+  display.setCursor(4, y); display.print("BARO  "); display.println(baroOk ? "OK" : "ABSENT"); y += 10;
+  display.setCursor(4, y); display.print("SD    "); display.println(sdOk ? "OK" : "ABSENT"); y += 10;
+  display.setCursor(4, y); display.print("LOG   "); display.println(sessionLog.active() ? "ACTIVE" : "INACTIVE"); y += 10;
+  display.setCursor(4, y); display.print("DROP  "); display.println((unsigned long)sessionLog.dropped()); y += 10;
+  display.setCursor(4, y); display.print("PRES  "); display.print(pressure, 1); display.println(" hPa");
 }
 
 void setupStorage() {
@@ -175,7 +180,6 @@ void loop() {
                   fused.rollDeg, fused.pitchDeg, fused.headingDeg,
                   fused.fusedAltitudeM, fused.fusedClimbRateMps);
     updateDisplay(last, pressure);
-    Serial.printf("DISPLAY UPDATE %lu\n", (unsigned long)(last / 1000));
   }
   delay(1);
 }
