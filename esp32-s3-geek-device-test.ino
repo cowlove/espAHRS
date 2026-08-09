@@ -26,6 +26,7 @@ constexpr HalHardwareProfile HARDWARE = makeHeadlessProfile();
 constexpr HalHardwareProfile HARDWARE = makeGeekS3Profile();
 #endif
 constexpr uint32_t IMU_OUTPUT_PERIOD_US = 20000; // 50 Hz application stream
+constexpr uint32_t COMPASS1_OUTPUT_PERIOD_US = 20000; // 50 Hz application stream
 
 // This is the LCD configuration from the last known-good pre-status-page
 // firmware.  Keep it unchanged until the panel is stable again.
@@ -408,6 +409,7 @@ void setup() {
 void loop() {
   static uint32_t last = 0;
   static uint32_t nextImuSampleUs = 0;
+  static uint32_t nextCompass1SampleUs = 0;
   handleSerialCommands();
   updateLoggingButton();
   updateBootLogging();
@@ -415,9 +417,13 @@ void loop() {
   if (qmcPOk) {
     float qx, qy, qz;
     bool valid = readQmc5883p(qx, qy, qz);
-    uint64_t nowUs = micros();
-    if (sessionLog.active()) sessionLog.appendCompass(1, nowUs, qx, qy, qz, valid);
-    ahrs.updateCompass(1, qx, qy, qz, valid, millis());
+    uint32_t sampleUs = micros();
+    if ((int32_t)(sampleUs - nextCompass1SampleUs) >= 0) {
+      nextCompass1SampleUs = sampleUs + COMPASS1_OUTPUT_PERIOD_US;
+      uint64_t nowUs = sampleUs;
+      if (sessionLog.active()) sessionLog.appendCompass(1, nowUs, qx, qy, qz, valid);
+      ahrs.updateCompass(1, qx, qy, qz, valid, millis());
+    }
   }
   std::string g5Packet;
   while (g5.read(g5Packet) > 0) {
