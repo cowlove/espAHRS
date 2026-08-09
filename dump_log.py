@@ -63,6 +63,10 @@ def main() -> int:
     ap.add_argument("--trace", help="write protocol trace lines to this file")
     ap.add_argument("--resume", action="store_true", help="resume an existing .part file")
     ap.add_argument("--attempts", type=int, default=8)
+    ap.add_argument("--request-delay", type=float, default=0.005,
+                    help="settling delay after each GET (seconds)")
+    ap.add_argument("--transaction-timeout", type=float, default=5.0,
+                    help="timeout for one DUMP/GET response")
     args = ap.parse_args()
     part = args.output + ".part"
     if not args.resume and os.path.exists(part): os.remove(part)
@@ -74,13 +78,17 @@ def main() -> int:
         seq = existing // chunk_size
         try:
             with serial.Serial(args.port, 115200, timeout=2) as ser:
-                deadline = started + args.timeout
+                overall_deadline = started + args.timeout
+                # A reconnect can leave status or a previous transfer's terminal
+                # error queued in USB CDC. Only responses to this session count.
+                ser.reset_input_buffer()
                 trace = open(args.trace, "a") if args.trace else None
                 def log(direction, data):
                     if trace: trace.write(f"{direction} {data!r}\n"); trace.flush()
                 command = f"DUMP {seq}\n".encode() if seq else b"DUMP\n"
                 ser.write(command); ser.flush(); log("TX", command)
-                line = read_protocol_line(ser, b"LOG_CHUNK_BEGIN ", deadline)
+                line = read_protocol_line(ser, b"LOG_CHUNK_BEGIN ",
+                                          min(overall_deadline, time.monotonic() + 10.0))
                 match = re.match(rb"LOG_CHUNK_BEGIN (\d+) (\d+)\n", line)
                 if not match: raise RuntimeError("bad response: " + line.decode(errors="replace"))
                 size, chunk_size = int(match.group(1)), int(match.group(2))
@@ -88,18 +96,24 @@ def main() -> int:
                 with open(part, "ab") as out:
                     crc = __import__('zlib').crc32
                     while existing < size:
-                        ser.write(f"GET {seq}\n".encode()); ser.flush(); time.sleep(.1); log("TX", f"GET {seq}\n".encode())
-                        read_protocol_line(ser, b"LOG_GET_OK ", deadline)
-                        header = read_line(ser, deadline)
+                        request = f"GET {seq}\n".encode()
+                        ser.write(request); ser.flush()
+                        if args.request_delay: time.sleep(args.request_delay)
+                        log("TX", request)
+                        transaction_deadline = min(overall_deadline,
+                                                   time.monotonic() + args.transaction_timeout)
+                        read_protocol_line(ser, b"LOG_GET_OK ", transaction_deadline)
+                        header = read_line(ser, transaction_deadline)
                         cm = re.match(rb"LOG_CHUNK (\d+) (\d+) ([0-9A-Fa-f]+)\n", header)
                         if not cm: raise RuntimeError("bad chunk header")
                         got, length, expected = int(cm.group(1)), int(cm.group(2)), int(cm.group(3), 16)
                         if got != seq: raise RuntimeError("unexpected chunk sequence")
-                        data = read_exact(ser, length, deadline)
+                        data = read_exact(ser, length, transaction_deadline)
                         if (crc(data) & 0xffffffff) != expected: raise RuntimeError(f"CRC mismatch chunk {seq}")
                         out.write(data); out.flush(); existing += length; seq += 1
                         if existing % (256 * 1024) < length or existing == size: print(f"received {existing}/{size} bytes ({existing * 100 // size}%)", flush=True)
-                end = read_line(ser, deadline)
+                end = read_line(ser, min(overall_deadline,
+                                         time.monotonic() + args.transaction_timeout))
                 if not end.startswith(b"LOG_CHUNK_END "): raise RuntimeError("missing LOG_CHUNK_END")
                 if trace: trace.close()
                 os.replace(part, args.output); print(f"saved {existing} bytes to {args.output}"); return 0

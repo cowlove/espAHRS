@@ -159,10 +159,15 @@ void dumpChunked(uint32_t startSeq = 0) {
   // Small diagnostic chunks keep USB CDC buffering and SD read failures
   // independently observable. Increase only after the ACK path is proven.
   const uint32_t chunkSize = 64;
-  size_t totalSize = sessionLog.fileSize();
-  Serial.printf("LOG_FILE name=%s size=%lu\n", sessionLog.fileName(), (unsigned long)totalSize);
   File f = sessionLog.openRead();
-  if (!f) { Serial.println("LOG_ERROR OPEN"); return; }
+  if (!f) {
+    Serial.printf("LOG_ERROR OPEN name=%s size_probe=%lu\n", sessionLog.fileName(),
+                  (unsigned long)sessionLog.fileSize());
+    return;
+  }
+  size_t totalSize = f.size();
+  Serial.printf("LOG_FILE name=%s size=%lu start=%lu\n", sessionLog.fileName(),
+                (unsigned long)totalSize, (unsigned long)startSeq);
   if (!f.seek((size_t)startSeq * chunkSize)) { f.close(); Serial.println("LOG_ERROR SEEK"); return; }
   Arduino_CRC32 crc;
   Serial.printf("LOG_CHUNK_BEGIN %lu %lu\n", (unsigned long)totalSize, (unsigned long)chunkSize);
