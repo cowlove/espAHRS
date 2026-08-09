@@ -42,6 +42,8 @@ bool displayOk = false, sdOk = false, imuOk = false, baroOk = false, qmcOk = fal
 bool qmcPOk = false;
 bool gpsOk = false;
 uint8_t gpsFixQuality = 0;
+uint8_t gpsSatellites = 0;
+float gpsPdop = 99.0f;
 SharedUbloxGPS sharedGps;
 AircraftAHRS ahrs;
 
@@ -82,7 +84,9 @@ void updateDisplay(uint32_t nowMs, float pressure) {
   display.fillScreen(ST77XX_BLACK);
   display.setTextSize(2); display.setCursor(2, 4);
   display.setTextColor(gpsOk ? ST77XX_GREEN : ST77XX_RED, ST77XX_BLACK);
-  display.printf("G%u ", gpsFixQuality);
+  display.printf("G%u S%u\n", gpsFixQuality, gpsSatellites);
+  display.setCursor(2, 24); display.setTextColor(gpsPdop < 2.0f ? ST77XX_GREEN : gpsPdop < 4.0f ? ST77XX_YELLOW : ST77XX_RED);
+  display.printf("PD%.1f ", gpsPdop);
   display.setTextColor(qmcPOk ? ST77XX_GREEN : ST77XX_RED); display.print("QP ");
   display.setTextColor(imuOk ? ST77XX_GREEN : ST77XX_RED); display.print("IM ");
   display.setTextColor(sdOk ? ST77XX_GREEN : ST77XX_RED); display.print("SD\n");
@@ -348,6 +352,8 @@ void setupGPS() {
 void updateGPS(uint32_t nowMs) {
   if (!gpsOk || !sharedGps.check()) return;
   gpsFixQuality = sharedGps.gnss.getFixType(0);
+  gpsSatellites = sharedGps.gnss.getSIV(0);
+  gpsPdop = sharedGps.gnss.getPDOP(0) * 0.01f;
   bool valid = gpsFixQuality >= 3;
   if (sessionLog.active()) {
     sessionLog.appendGps(nowMs,
