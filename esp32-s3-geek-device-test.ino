@@ -83,6 +83,7 @@ void updateDisplay(uint32_t nowMs, float pressure) {
 void setupStorage() {
   sdSpi.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
   sdOk = SD.begin(SD_CS, sdSpi, 20000000);
+  if (sdOk) sessionLog.recoverLatest(SD);
   Serial.printf("microSD SPI SCK=%d MISO=%d MOSI=%d CS=%d: %s\n",
                 SD_SCK, SD_MISO, SD_MOSI, SD_CS, sdOk ? "OK" : "not detected");
 }
@@ -225,7 +226,7 @@ void handleSerialCommands() {
         if (sessionLog.active()) Serial.println("LOG_ERROR ACTIVE");
         else if (sdOk && clearFusionLogs()) Serial.println("SD_FORMAT OK (logs cleared)");
         else Serial.println("SD_FORMAT FAIL");
-      } else if (command.equalsIgnoreCase("DUMP")) {
+      } else if (command.equalsIgnoreCase("DUMP") || command.startsWith("DUMP ")) {
         if (sessionLog.active()) {
           Serial.println("LOG_ERROR ACTIVE");
         } else {
