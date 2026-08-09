@@ -154,13 +154,14 @@ bool readSerialLine(String &line, uint32_t timeoutMs) {
   return false;
 }
 
-void dumpChunked() {
+void dumpChunked(uint32_t startSeq = 0) {
   // Small diagnostic chunks keep USB CDC buffering and SD read failures
   // independently observable. Increase only after the ACK path is proven.
   const uint32_t chunkSize = 64;
   size_t totalSize = sessionLog.fileSize();
   File f = SD.open(sessionLog.fileName(), FILE_READ);
   if (!f) { Serial.println("LOG_ERROR OPEN"); return; }
+  if (!f.seek((size_t)startSeq * chunkSize)) { f.close(); Serial.println("LOG_ERROR SEEK"); return; }
   Arduino_CRC32 crc;
   Serial.printf("LOG_CHUNK_BEGIN %lu %lu\n", (unsigned long)totalSize, (unsigned long)chunkSize);
   Serial.flush();
@@ -227,7 +228,9 @@ void handleSerialCommands() {
         if (sessionLog.active()) {
           Serial.println("LOG_ERROR ACTIVE");
         } else {
-          dumpChunked();
+          uint32_t startSeq = 0;
+          if (command.startsWith("DUMP ")) startSeq = (uint32_t)command.substring(5).toInt();
+          dumpChunked(startSeq);
         }
       } else if (command.equalsIgnoreCase("SCAN")) {
         scanI2c();
