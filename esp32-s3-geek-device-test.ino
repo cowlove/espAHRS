@@ -28,6 +28,8 @@ constexpr int I2C_SDA = 16, I2C_SCL = 17;
 constexpr int GPS_TX = 43, GPS_RX = 44;
 constexpr int SD_CS = 34, SD_SCK = 36, SD_MISO = 37, SD_MOSI = 35;
 constexpr int LOG_BUTTON = 0;
+constexpr uint32_t BOOT_LOG_DURATION_MS = 120000;
+constexpr uint32_t IMU_OUTPUT_PERIOD_US = 20000; // 50 Hz application stream
 
 // This is the LCD configuration from the last known-good pre-status-page
 // firmware.  Keep it unchanged until the panel is stable again.
@@ -41,12 +43,15 @@ Adafruit_BMP280 baro;
 enum class ImuKind { None, LSM9DS1, ICM20948 };
 ImuKind imuKind = ImuKind::None;
 bool displayOk = false, sdOk = false, imuOk = false, baroOk = false;
-bool gpsOk = false; // Reserved for the future Qwiic GPS module.
+bool gpsOk = false;
+SharedUbloxGPS sharedGps;
 AircraftAHRS ahrs;
 ReliableStreamESPNow g5("G5", true /* incoming benchmark traffic */);
 FusionSessionLog sessionLog;
 bool lastLogButton = true;
 uint32_t logButtonChangedMs = 0;
+bool bootLogSession = false;
+uint32_t bootLogDeadlineMs = 0;
 
 void setupDisplay() {
   pinMode(LCD_BL, OUTPUT); digitalWrite(LCD_BL, HIGH);
@@ -104,15 +109,57 @@ void updateLoggingButton() {
     if (pressed) {
       if (sessionLog.active()) {
         sessionLog.stop();
+        bootLogSession = false;
         Serial.printf("SESSION_LOG STOPPED written=%lu dropped=%lu errors=%lu\n",
                       (unsigned long)sessionLog.written(),
                       (unsigned long)sessionLog.dropped(),
                       (unsigned long)sessionLog.writeErrors());
       } else if (sdOk && sessionLog.begin(SD)) {
+        bootLogSession = false;
         Serial.println("SESSION_LOG STARTED");
       } else {
         Serial.println("SESSION_LOG START FAILED");
       }
+    }
+  }
+}
+
+void updateBootLogging() {
+  if (bootLogSession && sessionLog.active() &&
+      (int32_t)(millis() - bootLogDeadlineMs) >= 0) {
+    sessionLog.stop();
+    bootLogSession = false;
+    Serial.printf("SESSION_LOG AUTO-STOPPED written=%lu dropped=%lu errors=%lu\n",
+                  (unsigned long)sessionLog.written(),
+                  (unsigned long)sessionLog.dropped(),
+                  (unsigned long)sessionLog.writeErrors());
+  }
+}
+
+void handleSerialCommands() {
+  static String command;
+  while (Serial.available()) {
+    char c = (char)Serial.read();
+    if (c == '\n' || c == '\r') {
+      command.trim();
+      if (command.equalsIgnoreCase("DUMP")) {
+        if (sessionLog.active()) {
+          Serial.println("LOG_ERROR ACTIVE");
+        } else {
+          size_t size = sessionLog.fileSize();
+          Serial.printf("LOG_BEGIN %s %lu\n", sessionLog.fileName(),
+                        (unsigned long)size);
+          Serial.flush();
+          size_t sent = sessionLog.dumpTo(Serial);
+          Serial.flush();
+          Serial.printf("\nLOG_END %lu\n", (unsigned long)sent);
+        }
+      } else if (command.length()) {
+        Serial.println("LOG_ERROR UNKNOWN_COMMAND");
+      }
+      command = "";
+    } else if (c >= 32 && c <= 126 && command.length() < 32) {
+      command += c;
     }
   }
 }
@@ -150,20 +197,59 @@ void setupBerryIMU() {
                 baroOk ? "OK" : "ABSENT");
 }
 
+void setupGPS() {
+  static const uint32_t candidates[] = {38400, 9600, 115200};
+  if (!sharedGps.begin(gpsSerial, GPS_RX, GPS_TX, candidates,
+                       sizeof(candidates) / sizeof(candidates[0]))) {
+    Serial.println("u-blox GNSS not detected on GPIO43/44");
+    return;
+  }
+  gpsOk = sharedGps.configure(38400, 10);
+  Serial.printf("GPS config: UBX/NAV10/PVT=%s baud=%lu\n",
+                gpsOk ? "OK" : "FAIL", (unsigned long)sharedGps.baud);
+}
+
+void updateGPS(uint32_t nowMs) {
+  if (!gpsOk || !sharedGps.check()) return;
+  bool valid = sharedGps.gnss.getFixType(0) >= 3;
+  if (sessionLog.active()) {
+    sessionLog.appendGps(nowMs,
+      sharedGps.gnss.getLatitude(0), sharedGps.gnss.getLongitude(0),
+      sharedGps.gnss.getAltitudeMSL(0), sharedGps.gnss.getGroundSpeed(0),
+      sharedGps.gnss.getHeading(0), valid);
+  }
+  ahrs.updateGps(sharedGps.gnss.getHeading(0) * 1.0e-5f,
+                 sharedGps.gnss.getGroundSpeed(0) * 1.0e-3f,
+                 sharedGps.gnss.getAltitudeMSL(0) * 1.0e-3f,
+                 valid, nowMs);
+}
+
 void setup() {
   Serial.begin(115200); delay(500); Serial.println("ESP32-S3 Geek device test");
   Serial.println("Built in: LCD, microSD, WiFi/BLE, USB, UART, GPIO, I2C");
   pinMode(LOG_BUTTON, INPUT_PULLUP);
-  setupDisplay(); setupStorage(); setupBerryIMU(); setupG5Logging();
+  setupDisplay(); setupStorage(); setupBerryIMU(); setupGPS(); setupG5Logging();
   Serial.printf("LCD=%s SD=%s GPS=%s IMU=%s BARO=%s flash=%uMB PSRAM=%s\n", displayOk ? "OK" : "FAIL",
                 sdOk ? "OK" : "ABSENT", gpsOk ? "OK" : "ABSENT", imuOk ? "OK" : "ABSENT", baroOk ? "OK" : "ABSENT",
                 ESP.getFlashChipSize() / 1048576,
                 psramFound() ? "YES" : "NO");
+  if (sdOk && sessionLog.begin(SD)) {
+    bootLogSession = true;
+    bootLogDeadlineMs = millis() + BOOT_LOG_DURATION_MS;
+    Serial.printf("SESSION_LOG AUTO-STARTED duration=%lums\n",
+                  (unsigned long)BOOT_LOG_DURATION_MS);
+  } else {
+    Serial.println("SESSION_LOG AUTO-START FAILED");
+  }
 }
 
 void loop() {
   static uint32_t last = 0;
+  static uint32_t nextImuSampleUs = 0;
+  handleSerialCommands();
   updateLoggingButton();
+  updateBootLogging();
+  updateGPS(millis());
   std::string g5Packet;
   while (g5.read(g5Packet) > 0) {
     if (sessionLog.active()) sessionLog.append(FUSION_LOG_G5_PACKET, micros(),
@@ -175,6 +261,9 @@ void loop() {
     float ax, ay, az, gx, gy, gz, mx, my, mz;
     if (imuKind == ImuKind::ICM20948) {
       if (!icm20948.dataReady()) { delay(1); return; }
+      uint32_t readyUs = micros();
+      if ((int32_t)(readyUs - nextImuSampleUs) < 0) { delay(1); return; }
+      nextImuSampleUs = readyUs + IMU_OUTPUT_PERIOD_US;
       icm20948.getAGMT();
       ax = icm20948.accX() * 9.80665f; ay = icm20948.accY() * 9.80665f; az = icm20948.accZ() * 9.80665f;
       gx = icm20948.gyrX(); gy = icm20948.gyrY(); gz = icm20948.gyrZ();
