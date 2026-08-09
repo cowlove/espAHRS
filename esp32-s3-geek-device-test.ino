@@ -22,7 +22,10 @@ constexpr int LCD_RST = 9, LCD_BL = 7;
 constexpr int SD_CS = 34, SD_SCK = 36, SD_MISO = 37, SD_MOSI = 35;
 constexpr int LOG_BUTTON = 0;
 
-Adafruit_ST7789 display(LCD_CS, LCD_DC, LCD_RST);
+// Use the board's documented LCD SPI pins explicitly.  The 3-argument
+// constructor silently uses the core's default SPI pins, which can leave the
+// panel showing stale contents after a cold boot on this board.
+Adafruit_ST7789 display(LCD_CS, LCD_DC, LCD_MOSI, LCD_SCLK, LCD_RST);
 SPIClass sdSpi(HSPI);
 ReliableStreamESPNow espnow("GEEK", true /* alwaysBroadcast */);
 Adafruit_LSM9DS1 imu;
