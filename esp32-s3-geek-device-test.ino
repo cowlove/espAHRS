@@ -81,20 +81,39 @@ void setupDisplay() {
 void updateDisplay(uint32_t nowMs, float pressure) {
   if (!displayOk) return;
 
-  display.fillScreen(ST77XX_BLACK);
-  display.setTextSize(2); display.setCursor(2, 4);
+  // The panel is 240x135 in rotation 1.  Redraw fixed-height rows instead of
+  // clearing the whole panel; this avoids the visible 1 Hz flash and also
+  // prevents variable-width status text from leaving stale pixels behind.
+  constexpr int16_t left = 3;
+  constexpr int16_t rowHeight = 27;
+  auto beginRow = [&](int16_t row, uint8_t size) {
+    display.fillRect(0, row * rowHeight, 240, rowHeight, ST77XX_BLACK);
+    display.setTextSize(size);
+    display.setCursor(left, row * rowHeight + 3);
+  };
+
+  beginRow(0, 3);
   display.setTextColor(gpsOk ? ST77XX_GREEN : ST77XX_RED, ST77XX_BLACK);
-  display.printf("G%u S%u\n", gpsFixQuality, gpsSatellites);
-  display.setCursor(2, 24); display.setTextColor(gpsPdop < 2.0f ? ST77XX_GREEN : gpsPdop < 4.0f ? ST77XX_YELLOW : ST77XX_RED);
+  display.printf("G%u S%u", gpsFixQuality, gpsSatellites);
+
+  beginRow(1, 2);
+  display.setTextColor(gpsPdop < 2.0f ? ST77XX_GREEN : gpsPdop < 4.0f ? ST77XX_YELLOW : ST77XX_RED, ST77XX_BLACK);
   display.printf("PD%.1f ", gpsPdop);
   display.setTextColor(qmcPOk ? ST77XX_GREEN : ST77XX_RED); display.print("QP ");
   display.setTextColor(imuOk ? ST77XX_GREEN : ST77XX_RED); display.print("IM ");
-  display.setTextColor(sdOk ? ST77XX_GREEN : ST77XX_RED); display.print("SD\n");
-  display.setCursor(2, 28); display.setTextColor(sessionLog.active() ? ST77XX_YELLOW : ST77XX_WHITE);
+  display.setTextColor(sdOk ? ST77XX_GREEN : ST77XX_RED); display.print("SD");
+
+  beginRow(2, 3);
+  display.setTextColor(sessionLog.active() ? ST77XX_YELLOW : ST77XX_WHITE, ST77XX_BLACK);
   display.print(sessionLog.active() ? "LOG" : "---");
-  display.setTextColor(ST77XX_WHITE); display.printf(" D%lu", (unsigned long)sessionLog.dropped());
-  display.setCursor(2, 52); display.printf("%lus", (unsigned long)(nowMs / 1000));
-  display.setCursor(2, 76); display.printf("P%.0f", pressure);
+  display.setTextColor(ST77XX_WHITE, ST77XX_BLACK); display.printf(" D%lu", (unsigned long)sessionLog.dropped());
+
+  beginRow(3, 3);
+  display.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
+  display.printf("%lus", (unsigned long)(nowMs / 1000));
+
+  beginRow(4, 3);
+  display.printf("P%.0f", pressure);
 }
 
 void setupStorage() {
