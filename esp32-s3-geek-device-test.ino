@@ -21,6 +21,9 @@
 constexpr int LCD_SCLK = 12, LCD_MOSI = 11, LCD_CS = 10, LCD_DC = 8;
 constexpr int LCD_RST = 9, LCD_BL = 7;
 constexpr int I2C_SDA = 16, I2C_SCL = 17;
+// Exposed UART connector, cross-connected to the GPS module:
+// GEEK TX43 -> GPS RX, GEEK RX44 <- GPS TX.
+constexpr int GPS_TX = 43, GPS_RX = 44;
 constexpr int SD_CS = 34, SD_SCK = 36, SD_MISO = 37, SD_MOSI = 35;
 constexpr int LOG_BUTTON = 0;
 
@@ -29,6 +32,7 @@ constexpr int LOG_BUTTON = 0;
 Adafruit_ST7789 display(LCD_CS, LCD_DC, LCD_RST);
 SPIClass sdSpi(HSPI);
 ReliableStreamESPNow espnow("GEEK", true /* alwaysBroadcast */);
+HardwareSerial gpsSerial(1);
 Adafruit_LSM9DS1 imu;
 Adafruit_BMP280 baro;
 bool displayOk = false, sdOk = false, imuOk = false, baroOk = false;

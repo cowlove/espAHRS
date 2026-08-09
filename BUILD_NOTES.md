@@ -232,6 +232,36 @@ successful LCD and serial bring-up.
 
 ## External Qwiic hardware
 
+### Planned SEQURE M10-25Q GPS harness
+
+Use the exposed UART connector and the documented I2C connector as one shared
+harness. Signal directions are from the GEEK perspective:
+
+| GEEK signal | GPIO | Connect to M10-25Q | Purpose |
+|---|---:|---|---|
+| UART TX | 43 | GPS RX | UBX configuration commands |
+| UART RX | 44 | GPS TX | UBX/NMEA receiver data |
+| I2C SDA | 16 | QMC5883L SDA | Compass data |
+| I2C SCL | 17 | QMC5883L SCL | Compass clock |
+| 3V3/VCC | board connector | module VCC | Check module input specification first |
+| GND | board connector | module GND | Common reference |
+
+The UART lines must be crossed. GPIO43/44 are deliberately separate from the
+LCD (GPIO8/9/10/11/12) and TF-card signals. GPS RX is required because the
+firmware configures UBX output, baud rate, and navigation frequency at startup.
+
+The I2C connector identifies GPIO16/17, but the available board documentation
+does not prove that it includes pull-up resistors. Treat pull-ups as unknown:
+verify them electrically or on the schematic before relying on them. The
+QMC5883L board/module may provide its own pull-ups; do not add another strong
+pair in parallel without checking the resulting resistance. The ESP32 I2C
+controller's internal pull-ups are weak and should not be treated as the
+primary bus pull-ups.
+
+The GPS receiver uses UART; only the M10-25Q's QMC5883L compass belongs on the
+I2C pair. Keep all signals at the module's specified logic voltage and verify
+whether its VCC pin is 3.3 V or a regulated 5 V input before powering it.
+
 The BerryIMUv3 and future GPS are optional. I2C has a 20 ms timeout, and the
 firmware continues operating when they are disconnected:
 
