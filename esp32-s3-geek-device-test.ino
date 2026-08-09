@@ -37,7 +37,10 @@ uint32_t logButtonChangedMs = 0;
 
 void setupDisplay() {
   pinMode(LCD_BL, OUTPUT); digitalWrite(LCD_BL, HIGH);
-  display.init(135, 240); display.setRotation(1); display.fillScreen(ST77XX_BLACK);
+  // The panel's native orientation is portrait in the ST7789 controller, but
+  // the board is mounted landscape.  Rotation 1 produces sideways glyphs on
+  // this particular Geek panel; rotation 3 is the readable landscape mode.
+  display.init(135, 240); display.setRotation(3); display.fillScreen(ST77XX_BLACK);
   display.setTextColor(ST77XX_WHITE, ST77XX_BLACK); display.setTextSize(2);
   display.setCursor(4, 4); display.println("ESP32-S3 Geek");
   display.println("hardware test"); displayOk = true;
@@ -156,7 +159,8 @@ void loop() {
                   fused.rollDeg, fused.pitchDeg, fused.headingDeg,
                   fused.fusedAltitudeM, fused.fusedClimbRateMps);
     if (displayOk) {
-      display.fillRect(0, 42, 240, 93, ST77XX_BLACK); display.setCursor(4, 42);
+      display.fillRect(0, 42, display.width(), display.height() - 42, ST77XX_BLACK);
+      display.setCursor(4, 42);
       display.printf("1Hz %lus GPS %s\nIMU %s BARO %s\nP %.1f SD %s\nLOG %s\n",
                      last / 1000, gpsOk ? "OK" : "--", imuOk ? "OK" : "--",
                      baroOk ? "OK" : "--", pressure, sdOk ? "OK" : "--",
