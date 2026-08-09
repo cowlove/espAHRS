@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <ArduinoOTA.h>
+#include <math.h>
 #include <WiFiUdp.h>
 #include <SPI.h>
 #include <SD.h>
@@ -153,21 +154,31 @@ void loop() {
     sensors_event_t accel, gyro, mag;
     imu.getEvent(&accel, &mag, &gyro, nullptr);
     uint64_t nowUs = micros();
+    bool imuSampleValid = isfinite(accel.acceleration.x) &&
+      isfinite(accel.acceleration.y) && isfinite(accel.acceleration.z) &&
+      isfinite(gyro.gyro.x) && isfinite(gyro.gyro.y) && isfinite(gyro.gyro.z);
+    bool compass0Valid = isfinite(mag.magnetic.x) && isfinite(mag.magnetic.y) &&
+      isfinite(mag.magnetic.z);
     if (sessionLog.active()) sessionLog.appendImu(nowUs,
       gyro.gyro.x * 57.2957795f, gyro.gyro.y * 57.2957795f,
       gyro.gyro.z * 57.2957795f, accel.acceleration.x,
-      accel.acceleration.y, accel.acceleration.z, true);
+      accel.acceleration.y, accel.acceleration.z, imuSampleValid);
+    if (sessionLog.active()) sessionLog.appendCompass(0, nowUs,
+      mag.magnetic.x, mag.magnetic.y, mag.magnetic.z, compass0Valid);
     ahrs.updateImu(gyro.gyro.x * 57.2957795f, gyro.gyro.y * 57.2957795f,
                    gyro.gyro.z * 57.2957795f, nowUs,
                    accel.acceleration.x, accel.acceleration.y,
-                   accel.acceleration.z, true);
+                   accel.acceleration.z, imuSampleValid);
+    ahrs.updateCompass(0, mag.magnetic.x, mag.magnetic.y,
+                       mag.magnetic.z, compass0Valid, millis());
   }
   if (baroOk) {
     float pressurePa = baro.readPressure();
     float altitudeM = baro.readAltitude(1013.25f);
     uint64_t nowUs = micros();
-    if (sessionLog.active()) sessionLog.appendBaro(nowUs, pressurePa, altitudeM, true);
-    ahrs.updateBaro(altitudeM, true, millis());
+    bool baroSampleValid = isfinite(pressurePa) && isfinite(altitudeM) && pressurePa > 0.0f;
+    if (sessionLog.active()) sessionLog.appendBaro(nowUs, pressurePa, altitudeM, baroSampleValid);
+    ahrs.updateBaro(altitudeM, baroSampleValid, millis());
   }
   if (millis() - last >= 1000) {
     last = millis();
