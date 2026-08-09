@@ -156,10 +156,9 @@ bool readSerialLine(String &line, uint32_t timeoutMs) {
 }
 
 void dumpChunked(uint32_t startSeq = 0) {
-  // Host-driven half-duplex plus CRC makes a 256-byte payload a good balance:
-  // fewer transactions than the diagnostic 64-byte mode, while remaining
-  // comfortably below the USB CDC buffering failure seen with raw streaming.
-  const uint32_t chunkSize = 256;
+  // Host-driven half-duplex plus CRC lets us use the SD/USB-friendly 4 KiB
+  // payload size without returning to the unreliable unacknowledged stream.
+  const uint32_t chunkSize = 4096;
   File f = sessionLog.openRead();
   if (!f) {
     Serial.printf("LOG_ERROR OPEN name=%s size_probe=%lu\n", sessionLog.fileName(),
