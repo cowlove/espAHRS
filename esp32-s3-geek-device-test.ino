@@ -40,12 +40,25 @@ bool lastLogButton = true;
 uint32_t logButtonChangedMs = 0;
 
 void setupDisplay() {
-  pinMode(LCD_BL, OUTPUT); digitalWrite(LCD_BL, HIGH);
+  // Keep the panel dark while its controller is powered and reset.  On a
+  // cold plug-in the ST7789 can otherwise remain in its power-on/noise state
+  // even though the SPI library reports a successful init.
+  pinMode(LCD_BL, OUTPUT); digitalWrite(LCD_BL, LOW);
+  pinMode(LCD_CS, OUTPUT); digitalWrite(LCD_CS, HIGH);
+  pinMode(LCD_DC, OUTPUT); digitalWrite(LCD_DC, HIGH);
+  pinMode(LCD_RST, OUTPUT); digitalWrite(LCD_RST, HIGH);
+  delay(100);
+  digitalWrite(LCD_RST, LOW); delay(20);
+  digitalWrite(LCD_RST, HIGH); delay(150);
   lcdSpi.begin(LCD_SCLK, -1, LCD_MOSI, LCD_CS);
   // The panel's native orientation is portrait in the ST7789 controller, but
   // the board is mounted landscape.  Rotation 1 produces sideways glyphs on
   // this particular Geek panel; rotation 3 is the readable landscape mode.
-  display.init(135, 240); display.setRotation(3); displayOk = true;
+  display.init(135, 240);
+  display.setRotation(3);
+  display.fillScreen(ST77XX_BLACK);
+  digitalWrite(LCD_BL, HIGH);
+  displayOk = true;
 }
 
 void updateDisplay(uint32_t nowMs, float pressure) {
