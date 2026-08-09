@@ -14,6 +14,7 @@
 #include <reliableStream.h>
 #include "AircraftAHRS.h"
 #include "FusionSessionLog.h"
+#include "SharedUbloxGPS.h"
 
 // Waveshare-style ESP32-S3 Geek pinout. Verify against the board revision.
 // Pin map verified against the vendor ESP32-S3-GEEK demo sources.

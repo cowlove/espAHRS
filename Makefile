@@ -16,6 +16,7 @@ LIBS += ${ALIBS}/esp32jimlib ${ALIBS}/Arduino_CRC32
 LIBS += ${ALIBS}/Adafruit_GFX_Library ${ALIBS}/Adafruit_ST7735_and_ST7789_Library
 LIBS += ${ALIBS}/Adafruit_LSM9DS1_Library
 LIBS += ${ALIBS}/Adafruit_BMP280_Library ${ALIBS}/Adafruit_LIS3MDL
+LIBS += ${ALIBS}/SparkFun_u-blox_GNSS_Arduino_Library
 LIBS += ${ALIBS}/Adafruit_BusIO ${ALIBS}/Adafruit_Unified_Sensor
 LIBS += ${ALIBS}/esp32jimlib/src/espNowMux.cpp
 LIBS += ${ALIBS}/esp32jimlib/src/jimlib.cpp
