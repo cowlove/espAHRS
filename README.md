@@ -71,3 +71,21 @@ Verified against the vendor ESP32-S3-GEEK demo sources: SCLK `12`, MOSI
 - LSM9DS1 magnetometer: `0x1C`
 - BMP280: `0x76`, with fallback to `0x77`
 - Future GPS: not yet implemented; currently reported as `GPS=ABSENT`
+
+## Shared AircraftAHRS and session logging
+
+The Geek test imports the shared fusion implementation from the sibling
+`tbeam-supreme-device-test` checkout by default:
+
+```sh
+make FUSION_SHARED_DIR=../tbeam-supreme-device-test
+```
+
+This supplies `AircraftAHRS.h/.cpp` and `FusionSessionLog.h`. The same
+non-blocking logger records raw G5 ESP-NOW frames, decoded G5 packets, IMU
+samples, and barometer samples. GPIO0 toggles logging and the Geek board's
+microSD uses CS GPIO4. GPS records remain absent until a GPS source is added.
+
+For a different checkout or packaged shared library, override
+`FUSION_SHARED_DIR` with its path. Keep the shared source and both projects on
+compatible commits when collecting replay data.

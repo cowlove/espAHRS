@@ -12,12 +12,15 @@
 #include <Adafruit_BMP280.h>
 #include <espNowMux.h>
 #include <reliableStream.h>
+#include "AircraftAHRS.h"
+#include "FusionSessionLog.h"
 
 // Waveshare-style ESP32-S3 Geek pinout. Verify against the board revision.
 // Pin map verified against the vendor ESP32-S3-GEEK demo sources.
 constexpr int LCD_SCLK = 12, LCD_MOSI = 11, LCD_CS = 10, LCD_DC = 8;
 constexpr int LCD_RST = 9, LCD_BL = 7;
 constexpr int SD_CS = 4;
+constexpr int LOG_BUTTON = 0;
 
 Adafruit_ST7789 display(LCD_CS, LCD_DC, LCD_RST);
 ReliableStreamESPNow espnow("GEEK", true /* alwaysBroadcast */);
@@ -25,6 +28,11 @@ Adafruit_LSM9DS1 imu;
 Adafruit_BMP280 baro;
 bool displayOk = false, sdOk = false, imuOk = false, baroOk = false;
 bool gpsOk = false; // Reserved for the future Qwiic GPS module.
+AircraftAHRS ahrs;
+ReliableStreamESPNow g5("G5", true /* incoming benchmark traffic */);
+FusionSessionLog sessionLog;
+bool lastLogButton = true;
+uint32_t logButtonChangedMs = 0;
 
 void setupDisplay() {
   pinMode(LCD_BL, OUTPUT); digitalWrite(LCD_BL, HIGH);
@@ -37,6 +45,39 @@ void setupDisplay() {
 void setupStorage() {
   sdOk = SD.begin(SD_CS, SPI, 20000000);
   Serial.printf("microSD CS=%d: %s\n", SD_CS, sdOk ? "OK" : "not detected");
+}
+
+void setupG5Logging() {
+  std::string ignored;
+  g5.read(ignored); // Register the ReliableStream receive callback.
+  defaultEspNowMux.registerReadCallback("G5",
+    [](const uint8_t *mac, const uint8_t *data, int len) {
+      if (sessionLog.active() && len >= 0 && len <= 506) {
+        uint8_t raw[512]; memcpy(raw, mac, 6);
+        if (len) memcpy(raw + 6, data, len);
+        sessionLog.append(FUSION_LOG_G5_RAW_ESPNOW, micros(), raw, len + 6);
+      }
+    });
+}
+
+void updateLoggingButton() {
+  bool pressed = digitalRead(LOG_BUTTON) == LOW;
+  if (pressed != lastLogButton && millis() - logButtonChangedMs > 40) {
+    logButtonChangedMs = millis(); lastLogButton = pressed;
+    if (pressed) {
+      if (sessionLog.active()) {
+        sessionLog.stop();
+        Serial.printf("SESSION_LOG STOPPED written=%lu dropped=%lu errors=%lu\n",
+                      (unsigned long)sessionLog.written(),
+                      (unsigned long)sessionLog.dropped(),
+                      (unsigned long)sessionLog.writeErrors());
+      } else if (sessionLog.begin(SD_CS)) {
+        Serial.println("SESSION_LOG STARTED");
+      } else {
+        Serial.println("SESSION_LOG START FAILED");
+      }
+    }
+  }
 }
 
 void setupBerryIMU() {
@@ -59,7 +100,8 @@ void setupBerryIMU() {
 void setup() {
   Serial.begin(115200); delay(500); Serial.println("ESP32-S3 Geek device test");
   Serial.println("Built in: LCD, microSD, WiFi/BLE, USB, UART, GPIO, I2C");
-  setupDisplay(); setupStorage(); setupBerryIMU();
+  pinMode(LOG_BUTTON, INPUT_PULLUP);
+  setupDisplay(); setupStorage(); setupBerryIMU(); setupG5Logging();
   Serial.printf("LCD=%s SD=%s GPS=%s IMU=%s BARO=%s flash=%uMB PSRAM=%s\n", displayOk ? "OK" : "FAIL",
                 sdOk ? "OK" : "ABSENT", gpsOk ? "OK" : "ABSENT", imuOk ? "OK" : "ABSENT", baroOk ? "OK" : "ABSENT",
                 ESP.getFlashChipSize() / 1048576,
@@ -68,6 +110,33 @@ void setup() {
 
 void loop() {
   static uint32_t last = 0;
+  updateLoggingButton();
+  std::string g5Packet;
+  while (g5.read(g5Packet) > 0) {
+    if (sessionLog.active()) sessionLog.append(FUSION_LOG_G5_PACKET, micros(),
+                                                g5Packet.data(), g5Packet.size());
+    Serial.printf("G5_PACKET len=%u\n", (unsigned)g5Packet.size());
+  }
+  if (imuOk) {
+    sensors_event_t accel, gyro, mag;
+    imu.getEvent(&accel, &mag, &gyro, nullptr);
+    uint64_t nowUs = micros();
+    if (sessionLog.active()) sessionLog.appendImu(nowUs,
+      gyro.gyro.x * 57.2957795f, gyro.gyro.y * 57.2957795f,
+      gyro.gyro.z * 57.2957795f, accel.acceleration.x,
+      accel.acceleration.y, accel.acceleration.z, true);
+    ahrs.updateImu(gyro.gyro.x * 57.2957795f, gyro.gyro.y * 57.2957795f,
+                   gyro.gyro.z * 57.2957795f, nowUs,
+                   accel.acceleration.x, accel.acceleration.y,
+                   accel.acceleration.z, true);
+  }
+  if (baroOk) {
+    float pressurePa = baro.readPressure();
+    float altitudeM = baro.readAltitude(1013.25f);
+    uint64_t nowUs = micros();
+    if (sessionLog.active()) sessionLog.appendBaro(nowUs, pressurePa, altitudeM, true);
+    ahrs.updateBaro(altitudeM, true, millis());
+  }
   if (millis() - last >= 1000) {
     last = millis();
     char packet[128];
@@ -79,6 +148,10 @@ void loop() {
              gpsOk ? "OK" : "ABSENT", imuOk ? "OK" : "ABSENT", baroOk ? "OK" : "ABSENT", pressure);
     espnow.write(packet, true);
     Serial.print(packet);
+    const AircraftAHRS::State &fused = ahrs.state(millis());
+    Serial.printf("AHRS roll=%.1f pitch=%.1f heading=%.1f baroAlt=%.1f climb=%.2f\n",
+                  fused.rollDeg, fused.pitchDeg, fused.headingDeg,
+                  fused.fusedAltitudeM, fused.fusedClimbRateMps);
     if (displayOk) {
       display.fillRect(0, 42, 240, 70, ST77XX_BLACK); display.setCursor(4, 42);
       display.printf("1Hz %lus GPS %s\nIMU %s BARO %s\nP %.1f hPa SD %s",
