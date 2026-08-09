@@ -43,6 +43,7 @@ Adafruit_BMP280 baro;
 enum class ImuKind { None, LSM9DS1, ICM20948 };
 ImuKind imuKind = ImuKind::None;
 bool displayOk = false, sdOk = false, imuOk = false, baroOk = false, qmcOk = false;
+bool qmcPOk = false;
 bool gpsOk = false;
 SharedUbloxGPS sharedGps;
 AircraftAHRS ahrs;
@@ -72,7 +73,7 @@ void updateDisplay(uint32_t nowMs, float pressure) {
   display.drawFastHLine(0, 14, display.width(), ST77XX_BLUE);
   int y = 18;
   display.setCursor(4, y); display.print("GPS   "); display.println(gpsOk ? "OK" : "ABSENT"); y += 10;
-  display.setCursor(4, y); display.print("QMC   "); display.println(qmcOk ? "OK" : "ABSENT"); y += 10;
+  display.setCursor(4, y); display.print("QMC   "); display.println(qmcPOk ? "QMC5883P" : qmcOk ? "QMC?" : "ABSENT"); y += 10;
   display.setCursor(4, y); display.print("IMU   ");
   display.println(imuKind == ImuKind::ICM20948 ? "ICM20948" :
                   imuKind == ImuKind::LSM9DS1 ? "LSM9DS1" : "ABSENT"); y += 10;
@@ -220,6 +221,36 @@ void setupBerryIMU() {
                 baroOk ? "OK" : "ABSENT");
 }
 
+bool qmcWrite(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(0x2C); Wire.write(reg); Wire.write(value);
+  return Wire.endTransmission() == 0;
+}
+
+bool qmcRead(uint8_t reg, uint8_t *data, size_t length) {
+  Wire.beginTransmission(0x2C); Wire.write(reg);
+  if (Wire.endTransmission(false) != 0 || Wire.requestFrom(0x2C, length) != length) return false;
+  for (size_t i = 0; i < length; ++i) data[i] = Wire.read();
+  return true;
+}
+
+bool setupQmc5883p() {
+  uint8_t id = 0;
+  if (!qmcRead(0x0D, &id, 1)) return false;
+  Serial.printf("QMC5883P address=0x2C ID=0x%02X\n", id);
+  // QMC5883P: OSR=512, 8 gauss, 50 Hz, continuous mode.
+  return qmcWrite(0x0B, 0x00) && qmcWrite(0x0C, 0x01) && qmcWrite(0x0A, 0xCD);
+}
+
+bool readQmc5883p(float &x, float &y, float &z) {
+  uint8_t b[6];
+  if (!qmcRead(0x01, b, sizeof(b))) return false;
+  int16_t rx = (int16_t)((uint16_t)b[1] << 8 | b[0]);
+  int16_t ry = (int16_t)((uint16_t)b[3] << 8 | b[2]);
+  int16_t rz = (int16_t)((uint16_t)b[5] << 8 | b[4]);
+  x = rx; y = ry; z = rz;
+  return isfinite(x) && isfinite(y) && isfinite(z) && (rx || ry || rz);
+}
+
 void setupGPS() {
   static const uint32_t candidates[] = {38400, 9600, 115200};
   if (!sharedGps.begin(gpsSerial, GPS_RX, GPS_TX, candidates,
@@ -252,8 +283,9 @@ void setup() {
   Serial.println("Built in: LCD, microSD, WiFi/BLE, USB, UART, GPIO, I2C");
   pinMode(LOG_BUTTON, INPUT_PULLUP);
   setupDisplay(); setupStorage(); setupBerryIMU(); setupGPS(); setupG5Logging();
+  qmcPOk = setupQmc5883p();
   Serial.printf("LCD=%s SD=%s GPS=%s QMC=%s IMU=%s BARO=%s flash=%uMB PSRAM=%s\n", displayOk ? "OK" : "FAIL",
-                sdOk ? "OK" : "ABSENT", gpsOk ? "OK" : "ABSENT", qmcOk ? "OK" : "ABSENT",
+                sdOk ? "OK" : "ABSENT", gpsOk ? "OK" : "ABSENT", qmcPOk ? "QMC5883P" : qmcOk ? "QMC?" : "ABSENT",
                 imuOk ? "OK" : "ABSENT", baroOk ? "OK" : "ABSENT",
                 ESP.getFlashChipSize() / 1048576,
                 psramFound() ? "YES" : "NO");
@@ -274,6 +306,13 @@ void loop() {
   updateLoggingButton();
   updateBootLogging();
   updateGPS(millis());
+  if (qmcPOk) {
+    float qx, qy, qz;
+    bool valid = readQmc5883p(qx, qy, qz);
+    uint64_t nowUs = micros();
+    if (sessionLog.active()) sessionLog.appendCompass(1, nowUs, qx, qy, qz, valid);
+    ahrs.updateCompass(1, qx, qy, qz, valid, millis());
+  }
   std::string g5Packet;
   while (g5.read(g5Packet) > 0) {
     if (sessionLog.active()) sessionLog.append(FUSION_LOG_G5_PACKET, micros(),
@@ -322,7 +361,7 @@ void loop() {
     float pressure = baroOk ? baro.readPressure() / 100.0f : 0.0f;
     snprintf(packet, sizeof(packet), "GEEK TEST=1 MILLIS=%lu LCD=%s SD=%s GPS=%s QMC=%s IMU=%s BARO=%s P=%.1f\n",
              (unsigned long)last, displayOk ? "OK" : "FAIL", sdOk ? "OK" : "ABSENT",
-             gpsOk ? "OK" : "ABSENT", qmcOk ? "OK" : "ABSENT", imuOk ? "OK" : "ABSENT",
+             gpsOk ? "OK" : "ABSENT", qmcPOk ? "QMC5883P" : qmcOk ? "QMC?" : "ABSENT", imuOk ? "OK" : "ABSENT",
              baroOk ? "OK" : "ABSENT", pressure);
     espnow.write(packet, true);
     Serial.print(packet);
