@@ -25,6 +25,44 @@ Verified LCD map:
 | LCD reset | 9 |
 | Backlight | 7 |
 
+Verified I2C/Qwiic-style header map:
+
+| Signal | GPIO |
+|---|---:|
+| I2C SDA | 16 |
+| I2C SCL | 17 |
+
+The firmware must initialize this bus explicitly:
+
+```cpp
+Wire.begin(16, 17);
+```
+
+Do not use an unqualified `Wire.begin()` in this board template. On the
+ESP32-S3 configuration used during bring-up, the default I2C pin assignment
+can select GPIO8 and GPIO9. Those are already assigned to the LCD DC and
+LCD reset signals. The resulting failure is particularly deceptive:
+
+1. The LCD initializes and draws its splash screen.
+2. `Wire.begin()` runs later during optional IMU/barometer probing.
+3. The I2C peripheral reconfigures the LCD control pins.
+4. The main loop continues, but later LCD writes no longer reach the panel.
+5. The display appears frozen on the original static text, even though serial
+   output and the 1 Hz application loop are healthy.
+
+This was the root cause of the apparent dynamic-display failure. It was not a
+sensor-probe delay, an LCD rotation problem, or an SD-card problem. The
+working separation is:
+
+- LCD: SCLK 12, MOSI 11, CS 10, DC 8, RESET 9, backlight 7
+- TF card: SCK 36, MISO 37, MOSI 35, CS 34
+- I2C sensors: SDA 16, SCL 17
+
+Keep these buses and control pins explicitly assigned in future revisions.
+The LCD rendering is intentionally left at the current basic live-status
+implementation; typography, flicker reduction, and final orientation can be
+tuned later without changing this hardware initialization or pin map.
+
 ## TF-card pinout mismatch and resolution
 
 The storage failure was caused by trusting a plausible-looking pinout from
