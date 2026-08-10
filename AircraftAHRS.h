@@ -18,9 +18,13 @@ public:
         float fusedHeadingFilterTimeSec = 0.35f;
         float gpsHeadingSpeedThresholdMps = 20.576f; // 40 kt
         float gpsHeadingWeight = 3.0f;
+        float verticalRateFilterTimeSec = 1.5f;
+        float verticalAccelerationToleranceMps2 = 0.35f;
+        float verticalSmoothnessWindowSec = 3.0f;
         float angleOfAttackDeg = 0.0f;
         float gpsTimeoutSec = 1.0f;
         float accelCorrectionTimeSec = 12.0f;
+        float pitchGravityCorrectionTimeSec = 8.0f;
         float accelFilterTimeSec = 0.25f;
         float accelMagnitudeToleranceMps2 = 1.5f;
         float accelerometerRollWeight = 1.0f;
@@ -64,6 +68,9 @@ public:
         float bankTargetDeg = 0;
         float accelerometerRollDeg = 0;
         float rollCorrectionTargetDeg = 0;
+        float accelerometerPitchDeg = 0;
+        float pitchCorrectionTargetDeg = 0;
+        float verticalAccelerationMps2 = 0;
         float gpsFlightPathDeg = 0;
         bool gpsValid = false;
         bool kinematicAidingValid = false;
@@ -73,6 +80,8 @@ public:
         float fusedCompassHeadingDeg = 0.0f;
         bool compassAidingValid = false;
         bool accelerometerAidingValid = false;
+        bool pitchGravityAidingValid = false;
+        bool verticalMotionStable = false;
         bool headingAidingValid = false;
         bool barometerValid = false;
         bool verticalAidingValid = false;
@@ -123,6 +132,9 @@ private:
     float filteredFusedHeadingDeg_ = 0;
     float previousFusedHeadingDeg_ = 0;
     bool haveFusedHeading_ = false;
+    float verticalAccelerationMps2_ = 0;
+    uint32_t verticalSmoothSinceMs_ = 0;
+    bool verticalMotionStable_ = false;
     float filteredClimbRateMps_ = 0;
     bool haveGpsHistory_ = false;
     float filteredAccelX_ = 0;

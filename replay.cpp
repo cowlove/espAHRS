@@ -116,6 +116,7 @@ int main(int argc, char **argv) {
     uint32_t lastMs = 0;
     uint32_t expectedSequence = 0, sequenceGaps = 0, sequenceDuplicates = 0;
     uint32_t firstSequenceAnomaly = UINT32_MAX;
+    bool legacyAccelUnitsDetected = false;
     ErrorMetric rollError, pitchError, headingError;
     uint32_t g5Parsed = 0;
     std::vector<TimedState> stateHistory;
@@ -161,6 +162,18 @@ int main(int argc, char **argv) {
         case FUSION_LOG_IMU: {
             if (h.payloadLength != sizeof(FusionImuRecord)) return 1;
             FusionImuRecord r; std::memcpy(&r, payload, sizeof(r));
+            // Early GEEK captures contain ICM-20948 milli-g values that were
+            // accidentally tagged as m/s^2.  Keep those logs replayable while
+            // allowing an explicit scale override for other hardware.
+            float accelMagnitude = std::sqrt(r.accelX * r.accelX +
+                                             r.accelY * r.accelY +
+                                             r.accelZ * r.accelZ);
+            float accelScale = replayConfig.accelInputScale;
+            if (accelScale == 1.0f && accelMagnitude > 100.0f) {
+                accelScale = 0.001f;
+                legacyAccelUnitsDetected = true;
+            }
+            r.accelX *= accelScale; r.accelY *= accelScale; r.accelZ *= accelScale;
             rotateVector(sensorFrameRotation, r.gyroX, r.gyroY, r.gyroZ);
             rotateVector(sensorFrameRotation, r.accelX, r.accelY, r.accelZ);
             ahrs.updateImu(r.gyroX, r.gyroY, r.gyroZ,
@@ -222,13 +235,20 @@ int main(int argc, char **argv) {
                 sequenceGaps, sequenceDuplicates,
                 firstSequenceAnomaly == UINT32_MAX ? "none" : std::to_string(firstSequenceAnomaly).c_str());
     std::printf("G5_REFERENCE parsed=%u\n", g5Parsed);
+    std::printf("ACCEL_INPUT scale=%.6f legacy_mg_detected=%d\n",
+                legacyAccelUnitsDetected && replayConfig.accelInputScale == 1.0f ? 0.001f : replayConfig.accelInputScale,
+                legacyAccelUnitsDetected ? 1 : 0);
     rollError.print("roll_deg"); pitchError.print("pitch_deg"); headingError.print("heading_deg");
     std::printf("STATE roll=%.3f pitch=%.3f heading=%.3f fused_heading=%.3f "
                 "turn_rate=%.3f bank_target=%.3f accel_roll=%.3f roll_target=%.3f "
-                "compass=%.3f valid=%d\n",
+                "accel_pitch=%.3f pitch_target=%.3f vert_accel=%.3f "
+                "vert_stable=%d pitch_aiding=%d compass=%.3f valid=%d\n",
                 s.rollDeg, s.pitchDeg, s.headingDeg, s.fusedHeadingDeg,
                 s.fusedTurnRateDegSec, s.bankTargetDeg, s.accelerometerRollDeg,
-                s.rollCorrectionTargetDeg, s.fusedCompassHeadingDeg,
+                s.rollCorrectionTargetDeg, s.accelerometerPitchDeg,
+                s.pitchCorrectionTargetDeg, s.verticalAccelerationMps2,
+                s.verticalMotionStable ? 1 : 0, s.pitchGravityAidingValid ? 1 : 0,
+                s.fusedCompassHeadingDeg,
                 s.compassAidingValid ? 1 : 0);
     return in.eof() ? 0 : 1;
 }

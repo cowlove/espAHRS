@@ -470,7 +470,9 @@ void loop() {
       if ((int32_t)(readyUs - nextImuSampleUs) < 0) { delay(1); return; }
       nextImuSampleUs = readyUs + IMU_OUTPUT_PERIOD_US;
       icm20948.getAGMT();
-      ax = icm20948.accX() * 9.80665f; ay = icm20948.accY() * 9.80665f; az = icm20948.accZ() * 9.80665f;
+      // SparkFun's accX/Y/Z accessors return milli-g, not g or m/s^2.
+      // Convert to the SI units expected by AircraftAHRS and the log format.
+      ax = icm20948.accX() * 0.00980665f; ay = icm20948.accY() * 0.00980665f; az = icm20948.accZ() * 0.00980665f;
       gx = icm20948.gyrX(); gy = icm20948.gyrY(); gz = icm20948.gyrZ();
       mx = icm20948.magX(); my = icm20948.magY(); mz = icm20948.magZ();
     } else {
