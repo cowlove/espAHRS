@@ -96,17 +96,24 @@ static void rotateVector(const float m[3][3], float &x, float &y, float &z) {
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s session.bin [--param name=value] [--roll-csv FILE] [--list-params]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s session.bin [--param name=value] [--roll-csv FILE] [--pitch-csv FILE] [--list-params]\n", argv[0]);
         return 2;
     }
     ReplayConfig replayConfig;
     std::FILE *rollCsv = nullptr;
+    std::FILE *pitchCsv = nullptr;
     for (int i = 2; i < argc; ++i) {
         if (std::strcmp(argv[i], "--list-params") == 0) { ReplayConfig::list(); return 0; }
         if (std::strcmp(argv[i], "--roll-csv") == 0 && i + 1 < argc) {
             rollCsv = std::fopen(argv[++i], "w");
             if (!rollCsv) { std::perror("--roll-csv"); return 1; }
             std::fprintf(rollCsv, "time_s,g5_roll,ahrs_roll,accel_roll,error\n");
+            continue;
+        }
+        if (std::strcmp(argv[i], "--pitch-csv") == 0 && i + 1 < argc) {
+            pitchCsv = std::fopen(argv[++i], "w");
+            if (!pitchCsv) { std::perror("--pitch-csv"); return 1; }
+            std::fprintf(pitchCsv, "time_s,g5_pitch,ahrs_pitch,accel_pitch,error\n");
             continue;
         }
         if (std::strcmp(argv[i], "--param") == 0 && i + 1 < argc) ++i;
@@ -245,6 +252,13 @@ int main(int argc, char **argv) {
                                      state.accelerometerRollDeg,
                                      state.rollDeg - g5Roll);
                     }
+                    if (pitchCsv) {
+                        std::fprintf(pitchCsv, "%.6f,%.6f,%.6f,%.6f,%.6f\n",
+                                     h.timestampUs * 1.0e-6,
+                                     g5Pitch, state.pitchDeg,
+                                     state.accelerometerPitchDeg,
+                                     state.pitchDeg - g5Pitch);
+                    }
                     ++g5Parsed;
                 }
             }
@@ -255,6 +269,7 @@ int main(int argc, char **argv) {
     }
     const auto &s = ahrs.state(lastMs);
     if (rollCsv) std::fclose(rollCsv);
+    if (pitchCsv) std::fclose(pitchCsv);
     std::printf("REPLAY records=%llu bytes=%llu imu=%u compass0=%u compass1=%u baro=%u g5raw=%u g5=%u\n",
                 static_cast<unsigned long long>(records),
                 static_cast<unsigned long long>(bytes), counts[FUSION_LOG_IMU],
