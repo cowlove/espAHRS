@@ -39,6 +39,15 @@ public:
         float accelerometerRollWeight = 1.0f;
         float turnBankWeight = 1.0f;
         float maximumBankTargetDeg = 60.0f;
+        // NOAA WMM-2025 field at 47.6062 N, 122.3321 W, 0 km on 2026-08-09.
+        // Declination is east-positive; inclination is down-positive in NED.
+        float magneticDeclinationDeg = 14.89224f;
+        float magneticInclinationDeg = 68.75569f;
+        float magneticRollCorrectionTimeSec = 40.0f;
+        float magneticRollWeight = 0.25f;
+        float magneticFieldMagnitudeTolerance = 0.20f;
+        float magneticRollMaximumDisagreementDeg = 15.0f;
+        float magneticRollMinimumGeometry = 0.25f;
         float baroAltitudeFilterTimeSec = 0.5f;
         float baroRateFilterTimeSec = 0.75f;
         float baroGpsBiasTimeSec = 30.0f;
@@ -77,6 +86,10 @@ public:
         float bankTargetDeg = 0;
         float accelerometerRollDeg = 0;
         float rollCorrectionTargetDeg = 0;
+        float magneticRollDeg = 0;
+        float magneticRollInnovationDeg = 0;
+        float magneticRollSourceDisagreementDeg = 0;
+        uint8_t magneticRollSourceCount = 0;
         float accelerometerPitchDeg = 0;
         float pitchCorrectionTargetDeg = 0;
         float verticalAccelerationMps2 = 0;
@@ -89,6 +102,7 @@ public:
         float fusedCompassHeadingDeg = 0.0f;
         bool compassAidingValid = false;
         bool accelerometerAidingValid = false;
+        bool magneticRollAidingValid = false;
         bool pitchGravityAidingValid = false;
         bool verticalMotionStable = false;
         bool headingAidingValid = false;
@@ -117,6 +131,7 @@ public:
                        bool valid, uint32_t nowMs);
     void setCompassCalibration(uint8_t source, const float offset[3],
                                const float matrix[3][3]);
+    void setCompassFrameRotation(uint8_t source, const float matrix[3][3]);
     void setCompassFrameRotation(const float matrix[3][3]);
     // pressureAltitudeM should use the same sign convention as GPS altitude.
     // Baro is the responsive vertical signal; GPS slowly removes baro bias.
@@ -133,6 +148,9 @@ private:
     uint32_t lastHeadingAidingMs_ = 0;
     uint32_t lastFusedHeadingMs_ = 0;
     float compassHeading_[2] = {0.0f, 0.0f};
+    float compassRoll_[2] = {0.0f, 0.0f};
+    float compassMagnitude_[2] = {0.0f, 0.0f};
+    float compassRollGeometry_[2] = {0.0f, 0.0f};
     bool compassHave_[2] = {false, false};
     float lastTrackDeg_ = 0;
     float lastAltitudeM_ = 0;
@@ -160,4 +178,8 @@ private:
     static float correctionFraction(float dt, float timeConstant);
     float selectedClimbRate(uint32_t nowMs) const;
     void applyHeadingAiding(uint32_t nowMs);
+    bool solveMagneticAttitude(float x, float y, float z, float pitchDeg,
+                               float priorRollDeg, float priorHeadingDeg,
+                               float &rollDeg, float &headingDeg,
+                               float &rollGeometry) const;
 };

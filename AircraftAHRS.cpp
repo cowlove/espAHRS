@@ -20,6 +20,13 @@ void AircraftAHRS::setCompassCalibration(uint8_t source, const float offset[3],
     memcpy(cfg.calibrationMatrix, matrix, sizeof(cfg.calibrationMatrix));
 }
 
+void AircraftAHRS::setCompassFrameRotation(uint8_t source,
+                                            const float matrix[3][3]) {
+    if (source >= 2) return;
+    memcpy(config_.compass[source].frameRotation, matrix,
+           sizeof(config_.compass[source].frameRotation));
+}
+
 void AircraftAHRS::setCompassFrameRotation(const float matrix[3][3]) {
     for (auto &cfg : config_.compass) memcpy(cfg.frameRotation, matrix,
                                              sizeof(cfg.frameRotation));
@@ -33,6 +40,9 @@ void AircraftAHRS::reset() {
     lastHeadingAidingMs_ = 0;
     lastFusedHeadingMs_ = 0;
     compassHave_[0] = compassHave_[1] = false;
+    compassRoll_[0] = compassRoll_[1] = 0.0f;
+    compassMagnitude_[0] = compassMagnitude_[1] = 0.0f;
+    compassRollGeometry_[0] = compassRollGeometry_[1] = 0.0f;
     filteredTurnRateRadSec_ = filteredClimbRateMps_ = 0;
     filteredFusedTurnRateRadSec_ = 0;
     filteredFusedHeadingDeg_ = 0;
@@ -47,6 +57,63 @@ void AircraftAHRS::reset() {
     haveAccel_ = false;
     filteredBaroAltitudeM_ = filteredBaroRateMps_ = baroBiasM_ = 0;
     haveBaro_ = false;
+}
+
+bool AircraftAHRS::solveMagneticAttitude(float x, float y, float z,
+                                         float pitchDeg,
+                                         float priorRollDeg,
+                                         float priorHeadingDeg,
+                                         float &rollDeg,
+                                         float &headingDeg,
+                                         float &rollGeometry) const {
+    const float magnitude = sqrtf(x * x + y * y + z * z);
+    if (magnitude < 1.0e-6f) return false;
+    x /= magnitude; y /= magnitude; z /= magnitude;
+
+    const float pitch = pitchDeg * DEG_TO_RAD_F;
+    const float declination = config_.magneticDeclinationDeg * DEG_TO_RAD_F;
+    const float inclination = config_.magneticInclinationDeg * DEG_TO_RAD_F;
+    const float horizontal = cosf(inclination);
+    const float down = sinf(inclination);
+    const float denominator = cosf(pitch) * horizontal;
+    if (fabsf(denominator) < 1.0e-4f) return false;
+
+    float cosine = (x + sinf(pitch) * down) / denominator;
+    // Calibration noise can move the measured vector just outside the exact
+    // geometric solution.  Reject gross failures but tolerate a small clamp.
+    if (cosine < -1.15f || cosine > 1.15f) return false;
+    cosine = fmaxf(-1.0f, fminf(1.0f, cosine));
+    const float delta = acosf(cosine);
+
+    bool haveCandidate = false;
+    float bestScore = 0.0f;
+    for (int candidate = 0; candidate < 2; ++candidate) {
+        const float heading = declination + (candidate == 0 ? delta : -delta);
+        const float horizontalAlongHeading = horizontal * cosf(heading - declination);
+        const float yBeforeRoll = horizontal * sinf(declination - heading);
+        const float zBeforeRoll = sinf(pitch) * horizontalAlongHeading +
+                                  cosf(pitch) * down;
+        const float geometry = sqrtf(yBeforeRoll * yBeforeRoll +
+                                     zBeforeRoll * zBeforeRoll);
+        if (geometry < config_.magneticRollMinimumGeometry) continue;
+
+        const float roll = atan2f(y * zBeforeRoll - z * yBeforeRoll,
+                                  y * yBeforeRoll + z * zBeforeRoll);
+        const float candidateRollDeg = wrap180(roll * RAD_TO_DEG_F);
+        const float candidateHeadingDeg = wrap360(heading * RAD_TO_DEG_F);
+        // A single vector plus pitch leaves two discrete solutions.  Attitude
+        // continuity selects the branch without introducing GPS dependence.
+        const float score = fabsf(wrap180(candidateRollDeg - priorRollDeg)) +
+                            fabsf(wrap180(candidateHeadingDeg - priorHeadingDeg));
+        if (!haveCandidate || score < bestScore) {
+            bestScore = score;
+            rollDeg = candidateRollDeg;
+            headingDeg = candidateHeadingDeg;
+            rollGeometry = geometry;
+            haveCandidate = true;
+        }
+    }
+    return haveCandidate;
 }
 
 void AircraftAHRS::updateCompass(uint8_t source, float x, float y, float z,
@@ -69,10 +136,26 @@ void AircraftAHRS::updateCompass(uint8_t source, float x, float y, float z,
     float frameY = cfg.frameRotation[1][0] * x + cfg.frameRotation[1][1] * y + cfg.frameRotation[1][2] * z;
     float frameZ = cfg.frameRotation[2][0] * x + cfg.frameRotation[2][1] * y + cfg.frameRotation[2][2] * z;
     x = frameX; y = frameY; z = frameZ;
-    (void)z; // Heading-only aiding; tilt compensation belongs at the call site.
-    if (fabsf(x) < 1.0e-6f && fabsf(y) < 1.0e-6f) return;
-    compassHeading_[source] = wrap360(atan2f(y, x) * RAD_TO_DEG_F +
-                                      cfg.headingOffsetDeg + cfg.declinationDeg);
+    compassMagnitude_[source] = sqrtf(x * x + y * y + z * z);
+    if (fabsf(compassMagnitude_[source] - 1.0f) >
+        config_.magneticFieldMagnitudeTolerance) {
+        compassHave_[source] = false;
+        state_.compassValid[source] = false;
+        applyHeadingAiding(nowMs);
+        return;
+    }
+    float magneticRoll = 0.0f, magneticHeading = 0.0f, rollGeometry = 0.0f;
+    if (!solveMagneticAttitude(x, y, z, state_.pitchDeg, state_.rollDeg,
+                               state_.headingDeg, magneticRoll,
+                               magneticHeading, rollGeometry)) {
+        compassHave_[source] = false;
+        state_.compassValid[source] = false;
+        applyHeadingAiding(nowMs);
+        return;
+    }
+    compassRoll_[source] = magneticRoll;
+    compassRollGeometry_[source] = rollGeometry;
+    compassHeading_[source] = wrap360(magneticHeading + cfg.headingOffsetDeg);
     compassHave_[source] = true;
     lastCompassMs_[source] = nowMs;
     state_.compassHeadingDeg[source] = compassHeading_[source];
@@ -82,6 +165,9 @@ void AircraftAHRS::updateCompass(uint8_t source, float x, float y, float z,
 
 void AircraftAHRS::applyHeadingAiding(uint32_t nowMs) {
     float sumX = 0.0f, sumY = 0.0f, totalWeight = 0.0f;
+    float rollSumX = 0.0f, rollSumY = 0.0f, rollTotalWeight = 0.0f;
+    float sourceRoll[2] = {0.0f, 0.0f};
+    int rollSourceCount = 0;
     for (int i = 0; i < 2; ++i) {
         const auto &cfg = config_.compass[i];
         bool fresh = compassHave_[i] && lastCompassMs_[i] &&
@@ -92,11 +178,33 @@ void AircraftAHRS::applyHeadingAiding(uint32_t nowMs) {
         sumX += cfg.weight * cosf(r);
         sumY += cfg.weight * sinf(r);
         totalWeight += cfg.weight;
+        const float rollRadians = compassRoll_[i] * DEG_TO_RAD_F;
+        const float rollWeight = cfg.weight * compassRollGeometry_[i];
+        rollSumX += rollWeight * cosf(rollRadians);
+        rollSumY += rollWeight * sinf(rollRadians);
+        rollTotalWeight += rollWeight;
+        sourceRoll[rollSourceCount++] = compassRoll_[i];
     }
     bool compassAvailable = totalWeight > 0.0f;
     float magneticHeading = compassAvailable ?
         wrap360(atan2f(sumY, sumX) * RAD_TO_DEG_F) : 0.0f;
     if (compassAvailable) state_.fusedCompassHeadingDeg = magneticHeading;
+
+    state_.magneticRollAidingValid = false;
+    state_.magneticRollSourceCount = static_cast<uint8_t>(rollSourceCount);
+    state_.magneticRollSourceDisagreementDeg = 0.0f;
+    if (rollSourceCount == 2) {
+        state_.magneticRollSourceDisagreementDeg =
+            fabsf(wrap180(sourceRoll[0] - sourceRoll[1]));
+    }
+    if (rollTotalWeight > 0.0f &&
+        (rollSourceCount < 2 || state_.magneticRollSourceDisagreementDeg <=
+                                config_.magneticRollMaximumDisagreementDeg)) {
+        state_.magneticRollDeg = wrap180(atan2f(rollSumY, rollSumX) * RAD_TO_DEG_F);
+        state_.magneticRollInnovationDeg =
+            wrap180(state_.magneticRollDeg - state_.rollDeg);
+        state_.magneticRollAidingValid = true;
+    }
 
     // GPS track is deliberately treated as a heading source only after the
     // accepted low-speed threshold.  Below that threshold the magnetometers
@@ -305,6 +413,14 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
         float rollBlend = correctionFraction(dt, config_.rollCorrectionTimeSec);
         state_.rollCorrectionTargetDeg = state_.bankTargetDeg;
         state_.rollDeg += rollBlend * wrap180(state_.bankTargetDeg - state_.rollDeg);
+    }
+    if (state_.magneticRollAidingValid && config_.magneticRollWeight > 0.0f) {
+        const float magneticBlend = fminf(1.0f, config_.magneticRollWeight) *
+            correctionFraction(dt, config_.magneticRollCorrectionTimeSec);
+        state_.magneticRollInnovationDeg =
+            wrap180(state_.magneticRollDeg - state_.rollDeg);
+        state_.rollDeg += magneticBlend * state_.magneticRollInnovationDeg;
+        state_.rollDeg = wrap180(state_.rollDeg);
     }
 }
 

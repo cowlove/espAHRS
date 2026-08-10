@@ -427,7 +427,13 @@ void setup() {
                              HARDWARE.calibration.compass[0].matrix);
   ahrs.setCompassCalibration(1, HARDWARE.calibration.compass[1].offset,
                              HARDWARE.calibration.compass[1].matrix);
-  ahrs.setCompassFrameRotation(sensorFrameRotation);
+  float compassFrameRotation[3][3];
+  halMultiplyMatrix(sensorFrameRotation,
+      HARDWARE.calibration.compass[0].frameRotation, compassFrameRotation);
+  ahrs.setCompassFrameRotation(0, compassFrameRotation);
+  halMultiplyMatrix(sensorFrameRotation,
+      HARDWARE.calibration.compass[1].frameRotation, compassFrameRotation);
+  ahrs.setCompassFrameRotation(1, compassFrameRotation);
   setupDisplay(); setupStorage(); setupBerryIMU(); setupGPS(); setupG5Logging();
   qmcPOk = setupQmc5883p();
   Serial.printf("LCD=%s SD=%s GPS=%s QMC=%s IMU=%s BARO=%s flash=%uMB PSRAM=%s\n", displayOk ? "OK" : "FAIL",

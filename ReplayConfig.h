@@ -66,6 +66,13 @@ struct ReplayConfig {
             {"accelerometer_roll_weight", &ahrs.accelerometerRollWeight},
             {"turn_bank_weight", &ahrs.turnBankWeight},
             {"maximum_bank_target_deg", &ahrs.maximumBankTargetDeg},
+            {"magnetic_declination_deg", &ahrs.magneticDeclinationDeg},
+            {"magnetic_inclination_deg", &ahrs.magneticInclinationDeg},
+            {"magnetic_roll_correction_sec", &ahrs.magneticRollCorrectionTimeSec},
+            {"magnetic_roll_weight", &ahrs.magneticRollWeight},
+            {"magnetic_field_magnitude_tolerance", &ahrs.magneticFieldMagnitudeTolerance},
+            {"magnetic_roll_max_disagreement_deg", &ahrs.magneticRollMaximumDisagreementDeg},
+            {"magnetic_roll_min_geometry", &ahrs.magneticRollMinimumGeometry},
             {"min_ground_speed_mps", &ahrs.minimumGroundSpeedMps},
             {"baro_alt_filter_sec", &ahrs.baroAltitudeFilterTimeSec},
             {"baro_rate_filter_sec", &ahrs.baroRateFilterTimeSec},
@@ -106,7 +113,11 @@ struct ReplayConfig {
                    "gps_timeout_sec accel_correction_sec accel_filter_sec "
                    "pitch_gravity_correction_sec "
                    "accel_tolerance_mps2 accelerometer_roll_weight turn_bank_weight "
-                   "maximum_bank_target_deg min_ground_speed_mps baro_alt_filter_sec "
+                   "maximum_bank_target_deg magnetic_declination_deg "
+                   "magnetic_inclination_deg magnetic_roll_correction_sec "
+                   "magnetic_roll_weight magnetic_field_magnitude_tolerance "
+                   "magnetic_roll_max_disagreement_deg magnetic_roll_min_geometry "
+                   "min_ground_speed_mps baro_alt_filter_sec "
                    "baro_rate_filter_sec baro_gps_bias_sec baro_timeout_sec "
                    "g5_heading_offset_deg g5_time_offset_ms "
                    "sensor_pitch_offset_deg sensor_roll_offset_deg accel_input_scale");

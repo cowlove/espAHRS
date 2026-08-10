@@ -15,6 +15,10 @@ enum class HalDisplayKind : uint8_t {
 struct HalCompassCalibration {
   float offset[3];
   float matrix[3][3];
+  // Rotation from this compass's calibrated axes into the installed sensor
+  // frame.  The common sensor-to-aircraft mounting rotation is applied after
+  // this matrix, so replay offset sweeps still rotate every sensor together.
+  float frameRotation[3][3];
 };
 
 struct HalSensorCalibration {
@@ -52,6 +56,17 @@ inline void halRotateVector(const float matrix[3][3], float &x, float &y,
   x = a; y = b; z = c;
 }
 
+inline void halMultiplyMatrix(const float left[3][3], const float right[3][3],
+                              float result[3][3]) {
+  for (int row = 0; row < 3; ++row) {
+    for (int column = 0; column < 3; ++column) {
+      result[row][column] = 0.0f;
+      for (int k = 0; k < 3; ++k)
+        result[row][column] += left[row][k] * right[k][column];
+    }
+  }
+}
+
 struct HalHardwareProfile {
   const char *name;
   int i2cSda, i2cScl;
@@ -87,12 +102,20 @@ constexpr HalHardwareProfile makeGeekS3Profile() {
       {-0.002f, -0.019f, 0.222f},
       false,
       {
+        // Per-compass axis alignment fitted from the motion-alignment session
+        // after ellipsoid correction.  The common mounting pitch/roll is
+        // deliberately excluded and applied later to every sensor stream.
         {
           {-37.4412f, -2.7410f, -9.2134f},
           {
             {0.02139609f, 0.00013715f, 0.00008128f},
             {0.00013715f, 0.02186670f, -0.00068774f},
             {0.00008128f, -0.00068774f, 0.02277121f}
+          },
+          {
+            {0.77213273f, -0.09675043f, -0.62805286f},
+            {0.13093247f, 0.99135694f, 0.00825255f},
+            {0.62182614f, -0.08860457f, 0.77812691f}
           }
         },
         {
@@ -101,6 +124,11 @@ constexpr HalHardwareProfile makeGeekS3Profile() {
             {0.00200813f, -0.00000361f, -0.00005624f},
             {0.00000361f, -0.00209991f, 0.00003358f},
             {0.00005624f, 0.00003358f, -0.00219467f}
+          },
+          {
+            {0.84730183f, -0.04935318f, -0.52881365f},
+            {0.05163944f, 0.99861103f, -0.01045820f},
+            {0.52859529f, -0.01844639f, 0.84867352f}
           }
         }
       }

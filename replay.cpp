@@ -100,7 +100,9 @@ int main(int argc, char **argv) {
             if (!rollCsv) { std::perror("--roll-csv"); return 1; }
             std::fprintf(rollCsv,
                          "time_s,g5_roll,ahrs_roll,gps_bank_deg,bank_target_deg,"
-                         "accel_roll_deg,roll_correction_target_deg,fused_turn_rate_deg_sec,error\n");
+                         "accel_roll_deg,roll_correction_target_deg,fused_turn_rate_deg_sec,"
+                         "magnetic_roll_deg,magnetic_roll_innovation_deg,"
+                         "magnetic_roll_disagreement_deg,magnetic_roll_valid,error\n");
             continue;
         }
         if (std::strcmp(argv[i], "--pitch-csv") == 0 && i + 1 < argc) {
@@ -130,13 +132,22 @@ int main(int argc, char **argv) {
     halMakeSensorFrameRotation(replayConfig.sensorPitchOffsetDeg,
                                replayConfig.sensorRollOffsetDeg,
                                sensorFrameRotation);
-    ahrs.setCompassFrameRotation(sensorFrameRotation);
+    float compassFrameRotation[3][3];
+    halMultiplyMatrix(sensorFrameRotation,
+                      hardware.calibration.compass[0].frameRotation,
+                      compassFrameRotation);
+    ahrs.setCompassFrameRotation(0, compassFrameRotation);
+    halMultiplyMatrix(sensorFrameRotation,
+                      hardware.calibration.compass[1].frameRotation,
+                      compassFrameRotation);
+    ahrs.setCompassFrameRotation(1, compassFrameRotation);
     uint64_t records = 0, bytes = 0;
     uint32_t lastMs = 0;
     uint32_t expectedSequence = 0, sequenceGaps = 0, sequenceDuplicates = 0;
     uint32_t firstSequenceAnomaly = UINT32_MAX;
     bool legacyAccelUnitsDetected = false;
-    ErrorMetric rollError, pitchError, headingError;
+    ErrorMetric rollError, pitchError, headingError, magneticRollError;
+    uint32_t magneticRollReferences = 0;
     std::vector<TimedError> timedErrors;
     uint32_t g5Parsed = 0;
     std::vector<TimedState> stateHistory;
@@ -235,6 +246,11 @@ int main(int argc, char **argv) {
                         static_cast<int64_t>(replayConfig.g5TimeOffsetMs * 1000.0f);
                     const auto &state = stateAt(targetUs);
                     if (haveRoll) rollError.add(state.rollDeg - g5Roll);
+                    if (haveRoll && state.magneticRollAidingValid) {
+                        magneticRollError.add(angleError(state.magneticRollDeg,
+                                                         g5Roll));
+                        ++magneticRollReferences;
+                    }
                     if (havePitch) pitchError.add(state.pitchDeg - g5Pitch);
                     if (haveHeading) headingError.add(angleError(state.headingDeg,
                                                                   g5Heading + replayConfig.g5HeadingOffsetDeg));
@@ -245,13 +261,17 @@ int main(int argc, char **argv) {
                                                                g5Heading + replayConfig.g5HeadingOffsetDeg) : 0.0f};
                     timedErrors.push_back(timed);
                     if (rollCsv) {
-                        std::fprintf(rollCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+                        std::fprintf(rollCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%.6f\n",
                                      h.timestampUs * 1.0e-6,
                                      g5Roll, state.rollDeg,
                                      state.gpsBankDeg, state.bankTargetDeg,
                                      state.accelerometerRollDeg,
                                      state.rollCorrectionTargetDeg,
                                      state.fusedTurnRateDegSec,
+                                     state.magneticRollDeg,
+                                     state.magneticRollInnovationDeg,
+                                     state.magneticRollSourceDisagreementDeg,
+                                     state.magneticRollAidingValid ? 1 : 0,
                                      state.rollDeg - g5Roll);
                     }
                     if (pitchCsv) {
@@ -286,6 +306,9 @@ int main(int argc, char **argv) {
                 legacyAccelUnitsDetected && replayConfig.accelInputScale == 1.0f ? 0.001f : replayConfig.accelInputScale,
                 legacyAccelUnitsDetected ? 1 : 0);
     rollError.print("roll_deg"); pitchError.print("pitch_deg"); headingError.print("heading_deg");
+    std::printf("MAGNETIC_ROLL_REFERENCE valid=%u/%u\n",
+                magneticRollReferences, g5Parsed);
+    magneticRollError.print("magnetic_roll_deg");
     if (!timedErrors.empty()) {
         uint64_t first = timedErrors.front().timestampUs;
         uint64_t last = timedErrors.back().timestampUs;
@@ -308,11 +331,14 @@ int main(int argc, char **argv) {
     }
     std::printf("STATE roll=%.3f pitch=%.3f heading=%.3f fused_heading=%.3f "
                 "turn_rate=%.3f bank_target=%.3f accel_roll=%.3f roll_target=%.3f "
+                "mag_roll=%.3f mag_innov=%.3f mag_disagree=%.3f mag_valid=%d "
                 "accel_pitch=%.3f pitch_target=%.3f vert_accel=%.3f "
                 "vert_stable=%d pitch_aiding=%d compass=%.3f valid=%d\n",
                 s.rollDeg, s.pitchDeg, s.headingDeg, s.fusedHeadingDeg,
                 s.fusedTurnRateDegSec, s.bankTargetDeg, s.accelerometerRollDeg,
-                s.rollCorrectionTargetDeg, s.accelerometerPitchDeg,
+                s.rollCorrectionTargetDeg, s.magneticRollDeg,
+                s.magneticRollInnovationDeg, s.magneticRollSourceDisagreementDeg,
+                s.magneticRollAidingValid ? 1 : 0, s.accelerometerPitchDeg,
                 s.pitchCorrectionTargetDeg, s.verticalAccelerationMps2,
                 s.verticalMotionStable ? 1 : 0, s.pitchGravityAidingValid ? 1 : 0,
                 s.fusedCompassHeadingDeg,
