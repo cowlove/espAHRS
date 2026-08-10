@@ -26,6 +26,12 @@ struct ReplayConfig {
             {"fused_heading_filter_sec", &ahrs.fusedHeadingFilterTimeSec},
             {"gps_heading_speed_threshold_mps", &ahrs.gpsHeadingSpeedThresholdMps},
             {"gps_heading_weight", &ahrs.gpsHeadingWeight},
+            {"gyro_bias_x_deg_sec", &ahrs.gyroBiasXDegSec},
+            {"gyro_bias_y_deg_sec", &ahrs.gyroBiasYDegSec},
+            {"gyro_bias_z_deg_sec", &ahrs.gyroBiasZDegSec},
+            {"accel_bias_x_mps2", &ahrs.accelBiasXMps2},
+            {"accel_bias_y_mps2", &ahrs.accelBiasYMps2},
+            {"accel_bias_z_mps2", &ahrs.accelBiasZMps2},
             {"vertical_rate_filter_sec", &ahrs.verticalRateFilterTimeSec},
             {"vertical_accel_tolerance_mps2", &ahrs.verticalAccelerationToleranceMps2},
             {"vertical_smoothness_window_sec", &ahrs.verticalSmoothnessWindowSec},
@@ -70,6 +76,8 @@ struct ReplayConfig {
                    "pitch_correction_sec gps_derivative_sec angle_of_attack_deg "
                    "fused_heading_filter_sec gps_heading_speed_threshold_mps "
                    "gps_heading_weight "
+                   "gyro_bias_x_deg_sec gyro_bias_y_deg_sec gyro_bias_z_deg_sec "
+                   "accel_bias_x_mps2 accel_bias_y_mps2 accel_bias_z_mps2 "
                    "vertical_rate_filter_sec vertical_accel_tolerance_mps2 "
                    "vertical_smoothness_window_sec "
                    "gps_timeout_sec accel_correction_sec accel_filter_sec "

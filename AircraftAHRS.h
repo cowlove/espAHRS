@@ -18,6 +18,12 @@ public:
         float fusedHeadingFilterTimeSec = 0.35f;
         float gpsHeadingSpeedThresholdMps = 20.576f; // 40 kt
         float gpsHeadingWeight = 3.0f;
+        float gyroBiasXDegSec = 0.0f;
+        float gyroBiasYDegSec = 0.0f;
+        float gyroBiasZDegSec = 0.0f;
+        float accelBiasXMps2 = 0.0f;
+        float accelBiasYMps2 = 0.0f;
+        float accelBiasZMps2 = 0.0f;
         float verticalRateFilterTimeSec = 1.5f;
         float verticalAccelerationToleranceMps2 = 0.35f;
         float verticalSmoothnessWindowSec = 3.0f;

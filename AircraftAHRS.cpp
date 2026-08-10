@@ -201,6 +201,12 @@ float AircraftAHRS::correctionFraction(float dt, float timeConstant) {
 void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
                              uint32_t nowUs, float accelX, float accelY,
                              float accelZ, bool accelerometerValid) {
+    pDegSec -= config_.gyroBiasXDegSec;
+    qDegSec -= config_.gyroBiasYDegSec;
+    rDegSec -= config_.gyroBiasZDegSec;
+    accelX -= config_.accelBiasXMps2;
+    accelY -= config_.accelBiasYMps2;
+    accelZ -= config_.accelBiasZMps2;
     if (!lastImuUs_) {
         lastImuUs_ = nowUs;
         return;

@@ -53,6 +53,12 @@ struct TimedState {
     AircraftAHRS::State state;
 };
 
+struct TimedError {
+    uint64_t timestampUs;
+    bool haveRoll = false, havePitch = false, haveHeading = false;
+    float roll = 0, pitch = 0, heading = 0;
+};
+
 static bool g5Field(const uint8_t *payload, uint32_t length, const char *key, float &value) {
     std::string text(reinterpret_cast<const char *>(payload), length);
     std::string needle = std::string(key) + "=";
@@ -118,6 +124,7 @@ int main(int argc, char **argv) {
     uint32_t firstSequenceAnomaly = UINT32_MAX;
     bool legacyAccelUnitsDetected = false;
     ErrorMetric rollError, pitchError, headingError;
+    std::vector<TimedError> timedErrors;
     uint32_t g5Parsed = 0;
     std::vector<TimedState> stateHistory;
     auto stateAt = [&](uint64_t timestampUs) -> const AircraftAHRS::State & {
@@ -216,6 +223,12 @@ int main(int argc, char **argv) {
                     if (havePitch) pitchError.add(state.pitchDeg - g5Pitch);
                     if (haveHeading) headingError.add(angleError(state.headingDeg,
                                                                   g5Heading + replayConfig.g5HeadingOffsetDeg));
+                    TimedError timed{h.timestampUs, haveRoll, havePitch, haveHeading,
+                                     haveRoll ? state.rollDeg - g5Roll : 0.0f,
+                                     havePitch ? state.pitchDeg - g5Pitch : 0.0f,
+                                     haveHeading ? angleError(state.headingDeg,
+                                                               g5Heading + replayConfig.g5HeadingOffsetDeg) : 0.0f};
+                    timedErrors.push_back(timed);
                     ++g5Parsed;
                 }
             }
@@ -239,6 +252,26 @@ int main(int argc, char **argv) {
                 legacyAccelUnitsDetected && replayConfig.accelInputScale == 1.0f ? 0.001f : replayConfig.accelInputScale,
                 legacyAccelUnitsDetected ? 1 : 0);
     rollError.print("roll_deg"); pitchError.print("pitch_deg"); headingError.print("heading_deg");
+    if (!timedErrors.empty()) {
+        uint64_t first = timedErrors.front().timestampUs;
+        uint64_t last = timedErrors.back().timestampUs;
+        std::printf("ERROR_BY_TIME quartiles:\n");
+        for (int q = 0; q < 4; ++q) {
+            ErrorMetric r, p, hd;
+            for (const auto &e : timedErrors) {
+                uint64_t span = last > first ? last - first : 1;
+                int bucket = std::min(3, static_cast<int>(((e.timestampUs - first) * 4) / span));
+                if (bucket != q) continue;
+                if (e.haveRoll) r.add(e.roll);
+                if (e.havePitch) p.add(e.pitch);
+                if (e.haveHeading) hd.add(e.heading);
+            }
+            std::printf("  Q%d ", q + 1);
+            r.print("roll_deg");
+            std::printf("    "); p.print("pitch_deg");
+            std::printf("    "); hd.print("heading_deg");
+        }
+    }
     std::printf("STATE roll=%.3f pitch=%.3f heading=%.3f fused_heading=%.3f "
                 "turn_rate=%.3f bank_target=%.3f accel_roll=%.3f roll_target=%.3f "
                 "accel_pitch=%.3f pitch_target=%.3f vert_accel=%.3f "
