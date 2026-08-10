@@ -3,6 +3,8 @@
 For the detailed reusable bring-up lessons, see [BUILD_NOTES.md](BUILD_NOTES.md).
 For the replay/AHRS parameter reference and tuning workflow, see
 [TUNING.md](TUNING.md).
+For the literature and public-code background of the magnetic-vector roll
+observer, see [MAGNETIC_ROLL_PRIOR_ART.md](MAGNETIC_ROLL_PRIOR_ART.md).
 
 Bring-up project for the ESP32-S3 Geek board (Amazon ASIN B0CR6FV3QC).
 The test initializes the 1.14-inch LCD, probes the TF/microSD slot, reports
