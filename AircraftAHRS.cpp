@@ -20,6 +20,11 @@ void AircraftAHRS::setCompassCalibration(uint8_t source, const float offset[3],
     memcpy(cfg.calibrationMatrix, matrix, sizeof(cfg.calibrationMatrix));
 }
 
+void AircraftAHRS::setCompassFrameRotation(const float matrix[3][3]) {
+    for (auto &cfg : config_.compass) memcpy(cfg.frameRotation, matrix,
+                                             sizeof(cfg.frameRotation));
+}
+
 void AircraftAHRS::reset() {
     state_ = State();
     lastImuUs_ = lastGpsMs_ = 0;
@@ -51,6 +56,10 @@ void AircraftAHRS::updateCompass(uint8_t source, float x, float y, float z,
     x = cfg.calibrationMatrix[0][0] * rawX + cfg.calibrationMatrix[0][1] * rawY + cfg.calibrationMatrix[0][2] * rawZ;
     y = cfg.calibrationMatrix[1][0] * rawX + cfg.calibrationMatrix[1][1] * rawY + cfg.calibrationMatrix[1][2] * rawZ;
     z = cfg.calibrationMatrix[2][0] * rawX + cfg.calibrationMatrix[2][1] * rawY + cfg.calibrationMatrix[2][2] * rawZ;
+    float frameX = cfg.frameRotation[0][0] * x + cfg.frameRotation[0][1] * y + cfg.frameRotation[0][2] * z;
+    float frameY = cfg.frameRotation[1][0] * x + cfg.frameRotation[1][1] * y + cfg.frameRotation[1][2] * z;
+    float frameZ = cfg.frameRotation[2][0] * x + cfg.frameRotation[2][1] * y + cfg.frameRotation[2][2] * z;
+    x = frameX; y = frameY; z = frameZ;
     (void)z; // Heading-only aiding; tilt compensation belongs at the call site.
     if (fabsf(x) < 1.0e-6f && fabsf(y) < 1.0e-6f) return;
     compassHeading_[source] = wrap360(atan2f(y, x) * RAD_TO_DEG_F +
@@ -290,4 +299,3 @@ const AircraftAHRS::State &AircraftAHRS::state(uint32_t nowMs) {
     state_.verticalAidingValid = state_.barometerValid || state_.kinematicAidingValid;
     return state_;
 }
-

@@ -13,6 +13,8 @@ struct ReplayConfig {
     AircraftAHRS::Config ahrs;
     float g5HeadingOffsetDeg = 0.0f;
     float g5TimeOffsetMs = 20.0f;
+    float sensorPitchOffsetDeg = 11.7f;
+    float sensorRollOffsetDeg = 6.0f;
 
     bool set(const char *name, float value) {
         struct Field { const char *name; float *value; } fields[] = {
@@ -40,6 +42,12 @@ struct ReplayConfig {
         if (std::strcmp(name, "g5_time_offset_ms") == 0) {
             g5TimeOffsetMs = value; return true;
         }
+        if (std::strcmp(name, "sensor_pitch_offset_deg") == 0) {
+            sensorPitchOffsetDeg = value; return true;
+        }
+        if (std::strcmp(name, "sensor_roll_offset_deg") == 0) {
+            sensorRollOffsetDeg = value; return true;
+        }
         return false;
     }
 
@@ -49,6 +57,7 @@ struct ReplayConfig {
                    "gps_timeout_sec accel_correction_sec accel_filter_sec "
                    "accel_tolerance_mps2 min_ground_speed_mps baro_alt_filter_sec "
                    "baro_rate_filter_sec baro_gps_bias_sec baro_timeout_sec "
-                   "g5_heading_offset_deg g5_time_offset_ms");
+                   "g5_heading_offset_deg g5_time_offset_ms "
+                   "sensor_pitch_offset_deg sensor_roll_offset_deg");
     }
 };

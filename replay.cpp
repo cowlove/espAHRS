@@ -72,6 +72,22 @@ static float angleError(float estimate, float reference) {
     return e;
 }
 
+static void makeFrameRotation(float pitchDeg, float rollDeg, float m[3][3]) {
+    const float p = pitchDeg * 0.01745329252f, r = rollDeg * 0.01745329252f;
+    const float cp = std::cos(p), sp = std::sin(p), cr = std::cos(r), sr = std::sin(r);
+    // R = Rx(roll) * Ry(pitch), applied to sensor vectors.
+    m[0][0] = cp; m[0][1] = 0; m[0][2] = sp;
+    m[1][0] = sr * sp; m[1][1] = cr; m[1][2] = -sr * cp;
+    m[2][0] = -cr * sp; m[2][1] = sr; m[2][2] = cr * cp;
+}
+
+static void rotateVector(const float m[3][3], float &x, float &y, float &z) {
+    float a = m[0][0]*x + m[0][1]*y + m[0][2]*z;
+    float b = m[1][0]*x + m[1][1]*y + m[1][2]*z;
+    float c = m[2][0]*x + m[2][1]*y + m[2][2]*z;
+    x = a; y = b; z = c;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         std::fprintf(stderr, "usage: %s session.bin [--param name=value] [--list-params]\n", argv[0]);
@@ -92,6 +108,10 @@ int main(int argc, char **argv) {
     if (!in) { std::perror(argv[1]); return 1; }
 
     AircraftAHRS ahrs(replayConfig.ahrs);
+    float sensorFrameRotation[3][3];
+    makeFrameRotation(replayConfig.sensorPitchOffsetDeg,
+                      replayConfig.sensorRollOffsetDeg, sensorFrameRotation);
+    ahrs.setCompassFrameRotation(sensorFrameRotation);
     uint64_t records = 0, bytes = 0;
     uint32_t lastMs = 0;
     uint32_t expectedSequence = 0, sequenceGaps = 0, sequenceDuplicates = 0;
@@ -141,6 +161,8 @@ int main(int argc, char **argv) {
         case FUSION_LOG_IMU: {
             if (h.payloadLength != sizeof(FusionImuRecord)) return 1;
             FusionImuRecord r; std::memcpy(&r, payload, sizeof(r));
+            rotateVector(sensorFrameRotation, r.gyroX, r.gyroY, r.gyroZ);
+            rotateVector(sensorFrameRotation, r.accelX, r.accelY, r.accelZ);
             ahrs.updateImu(r.gyroX, r.gyroY, r.gyroZ,
                             static_cast<uint32_t>(h.timestampUs),
                             r.accelX, r.accelY, r.accelZ, r.valid != 0);

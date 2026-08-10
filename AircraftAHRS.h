@@ -32,6 +32,9 @@ public:
             float calibrationMatrix[3][3] = {
                 {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}
             };
+            float frameRotation[3][3] = {
+                {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}
+            };
             float headingOffsetDeg = 0.0f;
             float declinationDeg = 0.0f;
             float correctionTimeSec = 8.0f;
@@ -84,6 +87,7 @@ public:
                        bool valid, uint32_t nowMs);
     void setCompassCalibration(uint8_t source, const float offset[3],
                                const float matrix[3][3]);
+    void setCompassFrameRotation(const float matrix[3][3]);
     // pressureAltitudeM should use the same sign convention as GPS altitude.
     // Baro is the responsive vertical signal; GPS slowly removes baro bias.
     void updateBaro(float pressureAltitudeM, bool valid, uint32_t nowMs);
@@ -118,4 +122,3 @@ private:
     float selectedClimbRate(uint32_t nowMs) const;
     void applyCompassAiding(uint32_t nowMs);
 };
-
