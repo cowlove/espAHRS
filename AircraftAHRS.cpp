@@ -59,63 +59,6 @@ void AircraftAHRS::reset() {
     haveBaro_ = false;
 }
 
-bool AircraftAHRS::solveMagneticAttitude(float x, float y, float z,
-                                         float pitchDeg,
-                                         float priorRollDeg,
-                                         float priorHeadingDeg,
-                                         float &rollDeg,
-                                         float &headingDeg,
-                                         float &rollGeometry) const {
-    const float magnitude = sqrtf(x * x + y * y + z * z);
-    if (magnitude < 1.0e-6f) return false;
-    x /= magnitude; y /= magnitude; z /= magnitude;
-
-    const float pitch = pitchDeg * DEG_TO_RAD_F;
-    const float declination = config_.magneticDeclinationDeg * DEG_TO_RAD_F;
-    const float inclination = config_.magneticInclinationDeg * DEG_TO_RAD_F;
-    const float horizontal = cosf(inclination);
-    const float down = sinf(inclination);
-    const float denominator = cosf(pitch) * horizontal;
-    if (fabsf(denominator) < 1.0e-4f) return false;
-
-    float cosine = (x + sinf(pitch) * down) / denominator;
-    // Calibration noise can move the measured vector just outside the exact
-    // geometric solution.  Reject gross failures but tolerate a small clamp.
-    if (cosine < -1.15f || cosine > 1.15f) return false;
-    cosine = fmaxf(-1.0f, fminf(1.0f, cosine));
-    const float delta = acosf(cosine);
-
-    bool haveCandidate = false;
-    float bestScore = 0.0f;
-    for (int candidate = 0; candidate < 2; ++candidate) {
-        const float heading = declination + (candidate == 0 ? delta : -delta);
-        const float horizontalAlongHeading = horizontal * cosf(heading - declination);
-        const float yBeforeRoll = horizontal * sinf(declination - heading);
-        const float zBeforeRoll = sinf(pitch) * horizontalAlongHeading +
-                                  cosf(pitch) * down;
-        const float geometry = sqrtf(yBeforeRoll * yBeforeRoll +
-                                     zBeforeRoll * zBeforeRoll);
-        if (geometry < config_.magneticRollMinimumGeometry) continue;
-
-        const float roll = atan2f(y * zBeforeRoll - z * yBeforeRoll,
-                                  y * yBeforeRoll + z * zBeforeRoll);
-        const float candidateRollDeg = wrap180(roll * RAD_TO_DEG_F);
-        const float candidateHeadingDeg = wrap360(heading * RAD_TO_DEG_F);
-        // A single vector plus pitch leaves two discrete solutions.  Attitude
-        // continuity selects the branch without introducing GPS dependence.
-        const float score = fabsf(wrap180(candidateRollDeg - priorRollDeg)) +
-                            fabsf(wrap180(candidateHeadingDeg - priorHeadingDeg));
-        if (!haveCandidate || score < bestScore) {
-            bestScore = score;
-            rollDeg = candidateRollDeg;
-            headingDeg = candidateHeadingDeg;
-            rollGeometry = geometry;
-            haveCandidate = true;
-        }
-    }
-    return haveCandidate;
-}
-
 void AircraftAHRS::updateCompass(uint8_t source, float x, float y, float z,
                                  bool valid, uint32_t nowMs) {
     if (source >= 2) return;
@@ -144,18 +87,22 @@ void AircraftAHRS::updateCompass(uint8_t source, float x, float y, float z,
         applyHeadingAiding(nowMs);
         return;
     }
-    float magneticRoll = 0.0f, magneticHeading = 0.0f, rollGeometry = 0.0f;
-    if (!solveMagneticAttitude(x, y, z, state_.pitchDeg, state_.rollDeg,
-                               state_.headingDeg, magneticRoll,
-                               magneticHeading, rollGeometry)) {
+    DipAHRS::Config dipConfig;
+    dipConfig.magneticDeclinationDeg = config_.magneticDeclinationDeg;
+    dipConfig.magneticInclinationDeg = config_.magneticInclinationDeg;
+    dipConfig.minimumRollGeometry = config_.magneticRollMinimumGeometry;
+    DipAHRS::Observation dipObservation;
+    if (!DipAHRS::observe(x, y, z, state_.pitchDeg, state_.rollDeg,
+                          state_.headingDeg, dipConfig, dipObservation)) {
         compassHave_[source] = false;
         state_.compassValid[source] = false;
         applyHeadingAiding(nowMs);
         return;
     }
-    compassRoll_[source] = magneticRoll;
-    compassRollGeometry_[source] = rollGeometry;
-    compassHeading_[source] = wrap360(magneticHeading + cfg.headingOffsetDeg);
+    compassRoll_[source] = dipObservation.rollDeg;
+    compassRollGeometry_[source] = dipObservation.rollGeometry;
+    compassHeading_[source] =
+        wrap360(dipObservation.headingDeg + cfg.headingOffsetDeg);
     compassHave_[source] = true;
     lastCompassMs_[source] = nowMs;
     state_.compassHeadingDeg[source] = compassHeading_[source];

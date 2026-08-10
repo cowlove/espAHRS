@@ -31,6 +31,10 @@ include ${ALIBS}/makeEspArduino/makeEspArduino.mk
 cat:
 	while sleep .01; do if [ -c ${PORT} ]; then stty -F ${PORT} -echo raw 115200 && cat ${PORT}; fi; done | tee ./cat.`basename ${PORT}`.out
 
-.PHONY: replay
+.PHONY: replay dipahrs-test
 replay:
 	$(CXX) -std=c++17 -O2 -I. replay.cpp AircraftAHRS.cpp -o replay
+
+dipahrs-test:
+	$(CXX) -std=c++11 -O2 -I. dipahrs_test.cpp -o /tmp/esp32-s3-geek-dipahrs-test
+	/tmp/esp32-s3-geek-dipahrs-test

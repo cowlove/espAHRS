@@ -3,6 +3,8 @@
 For the detailed reusable bring-up lessons, see [BUILD_NOTES.md](BUILD_NOTES.md).
 For the replay/AHRS parameter reference and tuning workflow, see
 [TUNING.md](TUNING.md).
+For the proposed standalone DipAHRS package scope and algorithm design, see
+[DipAHRS.md](DipAHRS.md).
 For the literature and public-code background of the magnetic-vector roll
 observer, see [MAGNETIC_ROLL_PRIOR_ART.md](MAGNETIC_ROLL_PRIOR_ART.md).
 

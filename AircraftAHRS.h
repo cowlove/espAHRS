@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include "DipAHRS.h"
+
 // Deliberately narrow GPS-aided AHRS for coordinated, low-wind airplane flight.
 // Gyros provide short-term attitude; GPS track, turn rate and climb angle provide
 // the long-term yaw, roll and pitch references. Accelerometers contribute a
@@ -178,8 +180,4 @@ private:
     static float correctionFraction(float dt, float timeConstant);
     float selectedClimbRate(uint32_t nowMs) const;
     void applyHeadingAiding(uint32_t nowMs);
-    bool solveMagneticAttitude(float x, float y, float z, float pitchDeg,
-                               float priorRollDeg, float priorHeadingDeg,
-                               float &rollDeg, float &headingDeg,
-                               float &rollGeometry) const;
 };
