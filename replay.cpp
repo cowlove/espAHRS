@@ -48,6 +48,11 @@ struct ErrorMetric {
     }
 };
 
+struct TimedState {
+    uint64_t timestampUs;
+    AircraftAHRS::State state;
+};
+
 static bool g5Field(const uint8_t *payload, uint32_t length, const char *key, float &value) {
     std::string text(reinterpret_cast<const char *>(payload), length);
     std::string needle = std::string(key) + "=";
@@ -93,6 +98,20 @@ int main(int argc, char **argv) {
     uint32_t firstSequenceAnomaly = UINT32_MAX;
     ErrorMetric rollError, pitchError, headingError;
     uint32_t g5Parsed = 0;
+    std::vector<TimedState> stateHistory;
+    auto stateAt = [&](uint64_t timestampUs) -> const AircraftAHRS::State & {
+        static AircraftAHRS::State fallback;
+        if (stateHistory.empty()) return fallback;
+        auto it = std::lower_bound(stateHistory.begin(), stateHistory.end(), timestampUs,
+                                   [](const TimedState &sample, uint64_t t) {
+                                       return sample.timestampUs < t;
+                                   });
+        if (it == stateHistory.begin()) return it->state;
+        if (it == stateHistory.end()) return stateHistory.back().state;
+        auto previous = it - 1;
+        return (timestampUs - previous->timestampUs <= it->timestampUs - timestampUs) ?
+               previous->state : it->state;
+    };
     uint32_t counts[9] = {};
     ReplayHeader h{};
     while (in.read(reinterpret_cast<char *>(&h), sizeof(h))) {
@@ -155,7 +174,9 @@ int main(int argc, char **argv) {
                 bool havePitch = g5Field(payload, h.payloadLength, "P", g5Pitch);
                 bool haveHeading = g5Field(payload, h.payloadLength, "HDG", g5Heading);
                 if (haveRoll || havePitch || haveHeading) {
-                    const auto &state = ahrs.state(nowMs);
+                    uint64_t targetUs = h.timestampUs -
+                        static_cast<int64_t>(replayConfig.g5TimeOffsetMs * 1000.0f);
+                    const auto &state = stateAt(targetUs);
                     if (haveRoll) rollError.add(state.rollDeg - g5Roll);
                     if (havePitch) pitchError.add(state.pitchDeg - g5Pitch);
                     if (haveHeading) headingError.add(angleError(state.headingDeg,
@@ -165,6 +186,8 @@ int main(int argc, char **argv) {
             }
             break;
         }
+        if (h.type != FUSION_LOG_G5_PACKET && h.type != FUSION_LOG_G5_RAW_ESPNOW)
+            stateHistory.push_back({h.timestampUs, ahrs.state(nowMs)});
     }
     const auto &s = ahrs.state(lastMs);
     std::printf("REPLAY records=%llu bytes=%llu imu=%u compass0=%u compass1=%u baro=%u g5raw=%u g5=%u\n",
