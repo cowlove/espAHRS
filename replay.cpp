@@ -223,8 +223,12 @@ int main(int argc, char **argv) {
                 firstSequenceAnomaly == UINT32_MAX ? "none" : std::to_string(firstSequenceAnomaly).c_str());
     std::printf("G5_REFERENCE parsed=%u\n", g5Parsed);
     rollError.print("roll_deg"); pitchError.print("pitch_deg"); headingError.print("heading_deg");
-    std::printf("STATE roll=%.3f pitch=%.3f heading=%.3f compass=%.3f valid=%d\n",
-                s.rollDeg, s.pitchDeg, s.headingDeg, s.fusedCompassHeadingDeg,
+    std::printf("STATE roll=%.3f pitch=%.3f heading=%.3f fused_heading=%.3f "
+                "turn_rate=%.3f bank_target=%.3f accel_roll=%.3f roll_target=%.3f "
+                "compass=%.3f valid=%d\n",
+                s.rollDeg, s.pitchDeg, s.headingDeg, s.fusedHeadingDeg,
+                s.fusedTurnRateDegSec, s.bankTargetDeg, s.accelerometerRollDeg,
+                s.rollCorrectionTargetDeg, s.fusedCompassHeadingDeg,
                 s.compassAidingValid ? 1 : 0);
     return in.eof() ? 0 : 1;
 }
