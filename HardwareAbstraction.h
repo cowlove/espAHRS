@@ -81,7 +81,7 @@ constexpr HalHardwareProfile makeGeekS3Profile() {
     HalDisplayKind::GeekS3_ST7789,
     true, true,
     {
-      11.7f, 7.5f,
+      10.3f, 7.5f,
       {-0.48f, 0.05f, 0.16f},
       {1.0f, -1.0f, 1.0f},
       {-0.002f, -0.019f, 0.222f},
