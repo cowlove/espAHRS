@@ -96,12 +96,19 @@ static void rotateVector(const float m[3][3], float &x, float &y, float &z) {
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s session.bin [--param name=value] [--list-params]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s session.bin [--param name=value] [--roll-csv FILE] [--list-params]\n", argv[0]);
         return 2;
     }
     ReplayConfig replayConfig;
+    std::FILE *rollCsv = nullptr;
     for (int i = 2; i < argc; ++i) {
         if (std::strcmp(argv[i], "--list-params") == 0) { ReplayConfig::list(); return 0; }
+        if (std::strcmp(argv[i], "--roll-csv") == 0 && i + 1 < argc) {
+            rollCsv = std::fopen(argv[++i], "w");
+            if (!rollCsv) { std::perror("--roll-csv"); return 1; }
+            std::fprintf(rollCsv, "time_s,g5_roll,ahrs_roll,accel_roll,error\n");
+            continue;
+        }
         if (std::strcmp(argv[i], "--param") == 0 && i + 1 < argc) ++i;
         else if (std::strncmp(argv[i], "--param=", 8) == 0) argv[i] += 8;
         else { std::fprintf(stderr, "unknown option: %s\n", argv[i]); return 2; }
@@ -215,7 +222,9 @@ int main(int argc, char **argv) {
                 bool haveRoll = g5Field(payload, h.payloadLength, "R", g5Roll);
                 bool havePitch = g5Field(payload, h.payloadLength, "P", g5Pitch);
                 bool haveHeading = g5Field(payload, h.payloadLength, "HDG", g5Heading);
-                if (haveRoll || havePitch || haveHeading) {
+                // Administrative packets can contain unrelated fields named
+                // R= or P=.  Only a complete attitude tuple is a G5 reference.
+                if (haveRoll && havePitch && haveHeading) {
                     uint64_t targetUs = h.timestampUs -
                         static_cast<int64_t>(replayConfig.g5TimeOffsetMs * 1000.0f);
                     const auto &state = stateAt(targetUs);
@@ -229,6 +238,13 @@ int main(int argc, char **argv) {
                                      haveHeading ? angleError(state.headingDeg,
                                                                g5Heading + replayConfig.g5HeadingOffsetDeg) : 0.0f};
                     timedErrors.push_back(timed);
+                    if (rollCsv) {
+                        std::fprintf(rollCsv, "%.6f,%.6f,%.6f,%.6f,%.6f\n",
+                                     h.timestampUs * 1.0e-6,
+                                     g5Roll, state.rollDeg,
+                                     state.accelerometerRollDeg,
+                                     state.rollDeg - g5Roll);
+                    }
                     ++g5Parsed;
                 }
             }
@@ -238,6 +254,7 @@ int main(int argc, char **argv) {
             stateHistory.push_back({h.timestampUs, ahrs.state(nowMs)});
     }
     const auto &s = ahrs.state(lastMs);
+    if (rollCsv) std::fclose(rollCsv);
     std::printf("REPLAY records=%llu bytes=%llu imu=%u compass0=%u compass1=%u baro=%u g5raw=%u g5=%u\n",
                 static_cast<unsigned long long>(records),
                 static_cast<unsigned long long>(bytes), counts[FUSION_LOG_IMU],

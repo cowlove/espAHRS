@@ -266,15 +266,15 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
         if (accelerationQualityGood) {
             // Undo the current roll before extracting the fore/aft tilt.  The
             // installed GEEK/ICM convention used by the current logs has
-            // gravity approximately (0, 0, +g) when level and positive roll
-            // produces negative Y.
+            // gravity approximately (0, 0, +g) when level and positive G5
+            // roll corresponds to positive Y.
             float currentRoll = state_.rollDeg * DEG_TO_RAD_F;
             float correctedZ = -sinf(currentRoll) * filteredAccelY_ +
                                cosf(currentRoll) * filteredAccelZ_;
             float accelPitch = atan2f(filteredAccelX_, correctedZ) * RAD_TO_DEG_F;
             float horizontal = sqrtf(filteredAccelX_ * filteredAccelX_ +
                                      filteredAccelZ_ * filteredAccelZ_);
-            float accelRoll = atan2f(-filteredAccelY_, horizontal) * RAD_TO_DEG_F;
+            float accelRoll = atan2f(filteredAccelY_, horizontal) * RAD_TO_DEG_F;
             state_.accelerometerRollDeg = accelRoll;
             state_.accelerometerPitchDeg = accelPitch;
             state_.rollCorrectionTargetDeg =
