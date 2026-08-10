@@ -48,23 +48,24 @@ float gpsPdop = 99.0f;
 uint32_t lastG5PacketMs = 0;
 uint32_t discardedG5NmeaPackets = 0;
 SharedUbloxGPS sharedGps;
-AircraftAHRS ahrs;
-
-const float compass0Offset[3] = {-37.4412f, -2.7410f, -9.2134f};
-const float compass0Calibration[3][3] = {
-  {0.02139609f, 0.00013715f, 0.00008128f},
-  {0.00013715f, 0.02186670f, -0.00068774f},
-  {0.00008128f, -0.00068774f, 0.02277121f}
-};
-const float compass1Offset[3] = {149.5027f, 88.4811f, -73.3429f};
-// The measured board relationship is a 180-degree rotation about X:
-// C0 ~= (C1 X, -C1 Y, -C1 Z). The ellipsoid matrix is composed with that
-// polarity correction here, while the logger continues to store raw values.
-const float compass1Calibration[3][3] = {
-  {0.00200813f, -0.00000361f, -0.00005624f},
-  {0.00000361f, -0.00209991f, 0.00003358f},
-  {0.00005624f, 0.00003358f, -0.00219467f}
-};
+static AircraftAHRS::Config makeAhrsConfigFromHal() {
+  AircraftAHRS::Config config;
+  const HalSensorCalibration &calibration = HARDWARE.calibration;
+  config.gyroBiasXDegSec = calibration.gyroBiasDegSec[0];
+  config.gyroBiasYDegSec = calibration.gyroBiasDegSec[1];
+  config.gyroBiasZDegSec = calibration.gyroBiasDegSec[2];
+  config.gyroAxisSignX = calibration.gyroAxisSign[0];
+  config.gyroAxisSignY = calibration.gyroAxisSign[1];
+  config.gyroAxisSignZ = calibration.gyroAxisSign[2];
+  if (calibration.applyAccelBias) {
+    config.accelBiasXMps2 = calibration.accelBiasMps2[0];
+    config.accelBiasYMps2 = calibration.accelBiasMps2[1];
+    config.accelBiasZMps2 = calibration.accelBiasMps2[2];
+  }
+  return config;
+}
+AircraftAHRS ahrs(makeAhrsConfigFromHal());
+float sensorFrameRotation[3][3];
 ReliableStreamESPNow g5("G5", true /* incoming benchmark traffic */);
 FusionSessionLog sessionLog;
 
@@ -419,8 +420,14 @@ void setup() {
   Serial.begin(115200); delay(500); Serial.println("ESP32-S3 Geek device test");
   Serial.println("Built in: LCD, microSD, WiFi/BLE, USB, UART, GPIO, I2C");
   if (HARDWARE.hasLogButton) pinMode(HARDWARE.logButton, INPUT_PULLUP);
-  ahrs.setCompassCalibration(0, compass0Offset, compass0Calibration);
-  ahrs.setCompassCalibration(1, compass1Offset, compass1Calibration);
+  halMakeSensorFrameRotation(HARDWARE.calibration.sensorPitchOffsetDeg,
+                             HARDWARE.calibration.sensorRollOffsetDeg,
+                             sensorFrameRotation);
+  ahrs.setCompassCalibration(0, HARDWARE.calibration.compass[0].offset,
+                             HARDWARE.calibration.compass[0].matrix);
+  ahrs.setCompassCalibration(1, HARDWARE.calibration.compass[1].offset,
+                             HARDWARE.calibration.compass[1].matrix);
+  ahrs.setCompassFrameRotation(sensorFrameRotation);
   setupDisplay(); setupStorage(); setupBerryIMU(); setupGPS(); setupG5Logging();
   qmcPOk = setupQmc5883p();
   Serial.printf("LCD=%s SD=%s GPS=%s QMC=%s IMU=%s BARO=%s flash=%uMB PSRAM=%s\n", displayOk ? "OK" : "FAIL",
@@ -488,7 +495,14 @@ void loop() {
       gx, gy, gz, ax, ay, az, imuSampleValid);
     if (sessionLog.active()) sessionLog.appendCompass(0, nowUs,
       mx, my, mz, compass0Valid);
-    ahrs.updateImu(gx, gy, gz, nowUs, ax, ay, az, imuSampleValid);
+    // Preserve raw values in the log.  Only the AHRS path receives the
+    // installed-sensor-to-aircraft frame rotation from the HAL profile.
+    float ahrsGx = gx, ahrsGy = gy, ahrsGz = gz;
+    float ahrsAx = ax, ahrsAy = ay, ahrsAz = az;
+    halRotateVector(sensorFrameRotation, ahrsGx, ahrsGy, ahrsGz);
+    halRotateVector(sensorFrameRotation, ahrsAx, ahrsAy, ahrsAz);
+    ahrs.updateImu(ahrsGx, ahrsGy, ahrsGz, nowUs,
+                   ahrsAx, ahrsAy, ahrsAz, imuSampleValid);
     ahrs.updateCompass(0, mx, my, mz, compass0Valid, millis());
   }
   if (baroOk) {

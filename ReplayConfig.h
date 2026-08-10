@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AircraftAHRS.h"
+#include "HardwareAbstraction.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -16,6 +17,24 @@ struct ReplayConfig {
     float sensorPitchOffsetDeg = 11.7f;
     float sensorRollOffsetDeg = 6.0f;
     float accelInputScale = 1.0f;
+
+    ReplayConfig() {
+        constexpr HalHardwareProfile hardware = makeGeekS3Profile();
+        const HalSensorCalibration &calibration = hardware.calibration;
+        sensorPitchOffsetDeg = calibration.sensorPitchOffsetDeg;
+        sensorRollOffsetDeg = calibration.sensorRollOffsetDeg;
+        ahrs.gyroBiasXDegSec = calibration.gyroBiasDegSec[0];
+        ahrs.gyroBiasYDegSec = calibration.gyroBiasDegSec[1];
+        ahrs.gyroBiasZDegSec = calibration.gyroBiasDegSec[2];
+        ahrs.gyroAxisSignX = calibration.gyroAxisSign[0];
+        ahrs.gyroAxisSignY = calibration.gyroAxisSign[1];
+        ahrs.gyroAxisSignZ = calibration.gyroAxisSign[2];
+        if (calibration.applyAccelBias) {
+            ahrs.accelBiasXMps2 = calibration.accelBiasMps2[0];
+            ahrs.accelBiasYMps2 = calibration.accelBiasMps2[1];
+            ahrs.accelBiasZMps2 = calibration.accelBiasMps2[2];
+        }
+    }
 
     bool set(const char *name, float value) {
         struct Field { const char *name; float *value; } fields[] = {
