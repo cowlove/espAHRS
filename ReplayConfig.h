@@ -29,6 +29,9 @@ struct ReplayConfig {
             {"gyro_bias_x_deg_sec", &ahrs.gyroBiasXDegSec},
             {"gyro_bias_y_deg_sec", &ahrs.gyroBiasYDegSec},
             {"gyro_bias_z_deg_sec", &ahrs.gyroBiasZDegSec},
+            {"gyro_axis_sign_x", &ahrs.gyroAxisSignX},
+            {"gyro_axis_sign_y", &ahrs.gyroAxisSignY},
+            {"gyro_axis_sign_z", &ahrs.gyroAxisSignZ},
             {"accel_bias_x_mps2", &ahrs.accelBiasXMps2},
             {"accel_bias_y_mps2", &ahrs.accelBiasYMps2},
             {"accel_bias_z_mps2", &ahrs.accelBiasZMps2},
@@ -77,6 +80,7 @@ struct ReplayConfig {
                    "fused_heading_filter_sec gps_heading_speed_threshold_mps "
                    "gps_heading_weight "
                    "gyro_bias_x_deg_sec gyro_bias_y_deg_sec gyro_bias_z_deg_sec "
+                   "gyro_axis_sign_x gyro_axis_sign_y gyro_axis_sign_z "
                    "accel_bias_x_mps2 accel_bias_y_mps2 accel_bias_z_mps2 "
                    "vertical_rate_filter_sec vertical_accel_tolerance_mps2 "
                    "vertical_smoothness_window_sec "

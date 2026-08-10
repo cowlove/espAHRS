@@ -204,6 +204,9 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
     pDegSec -= config_.gyroBiasXDegSec;
     qDegSec -= config_.gyroBiasYDegSec;
     rDegSec -= config_.gyroBiasZDegSec;
+    pDegSec *= config_.gyroAxisSignX;
+    qDegSec *= config_.gyroAxisSignY;
+    rDegSec *= config_.gyroAxisSignZ;
     accelX -= config_.accelBiasXMps2;
     accelY -= config_.accelBiasYMps2;
     accelZ -= config_.accelBiasZMps2;

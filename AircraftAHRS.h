@@ -21,6 +21,9 @@ public:
         float gyroBiasXDegSec = 0.0f;
         float gyroBiasYDegSec = 0.0f;
         float gyroBiasZDegSec = 0.0f;
+        float gyroAxisSignX = 1.0f;
+        float gyroAxisSignY = 1.0f;
+        float gyroAxisSignZ = 1.0f;
         float accelBiasXMps2 = 0.0f;
         float accelBiasYMps2 = 0.0f;
         float accelBiasZMps2 = 0.0f;
