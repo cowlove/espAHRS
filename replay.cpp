@@ -98,7 +98,9 @@ int main(int argc, char **argv) {
         if (std::strcmp(argv[i], "--roll-csv") == 0 && i + 1 < argc) {
             rollCsv = std::fopen(argv[++i], "w");
             if (!rollCsv) { std::perror("--roll-csv"); return 1; }
-            std::fprintf(rollCsv, "time_s,g5_roll,ahrs_roll,accel_roll,error\n");
+            std::fprintf(rollCsv,
+                         "time_s,g5_roll,ahrs_roll,gps_bank_deg,bank_target_deg,"
+                         "accel_roll_deg,roll_correction_target_deg,fused_turn_rate_deg_sec,error\n");
             continue;
         }
         if (std::strcmp(argv[i], "--pitch-csv") == 0 && i + 1 < argc) {
@@ -243,10 +245,13 @@ int main(int argc, char **argv) {
                                                                g5Heading + replayConfig.g5HeadingOffsetDeg) : 0.0f};
                     timedErrors.push_back(timed);
                     if (rollCsv) {
-                        std::fprintf(rollCsv, "%.6f,%.6f,%.6f,%.6f,%.6f\n",
+                        std::fprintf(rollCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
                                      h.timestampUs * 1.0e-6,
                                      g5Roll, state.rollDeg,
+                                     state.gpsBankDeg, state.bankTargetDeg,
                                      state.accelerometerRollDeg,
+                                     state.rollCorrectionTargetDeg,
+                                     state.fusedTurnRateDegSec,
                                      state.rollDeg - g5Roll);
                     }
                     if (pitchCsv) {
