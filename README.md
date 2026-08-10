@@ -1,6 +1,8 @@
 # ESP32-S3 Geek hardware test
 
 For the detailed reusable bring-up lessons, see [BUILD_NOTES.md](BUILD_NOTES.md).
+For the replay/AHRS parameter reference and tuning workflow, see
+[TUNING.md](TUNING.md).
 
 Bring-up project for the ESP32-S3 Geek board (Amazon ASIN B0CR6FV3QC).
 The test initializes the 1.14-inch LCD, probes the TF/microSD slot, reports
@@ -74,26 +76,19 @@ Verified against the vendor ESP32-S3-GEEK demo sources: SCLK `12`, MOSI
 - BMP280: `0x76`, with fallback to `0x77`
 - Future GPS: not yet implemented; currently reported as `GPS=ABSENT`
 
-## Shared AircraftAHRS and session logging
+## AircraftAHRS, replay, and session logging
 
-The Geek test imports the shared fusion implementation from the sibling
-`tbeam-supreme-device-test` checkout by default:
-
-```sh
-make FUSION_SHARED_DIR=../tbeam-supreme-device-test
-```
+The GEEK project contains its own copies of the fusion, logging, GPS, and
+replay sources. It no longer depends on a sibling T-Beam checkout. The
+replay/AHRS tuning workflow is documented in [TUNING.md](TUNING.md).
 
 At startup the GEEK firmware probes the ICM-20948 at both possible addresses,
 then falls back to the LSM9DS1. The selected device's accelerometer, gyro, and
 magnetometer are normalized into the existing IMU and compass-0 log records;
 the device name is shown on the status display and serial startup line.
 
-This supplies `AircraftAHRS.h/.cpp` and `FusionSessionLog.h`. The same
-non-blocking logger records raw G5 ESP-NOW frames, decoded G5 packets, IMU
-samples, and barometer samples. GPIO0 toggles logging and the Geek board's
-microSD uses the documented HSPI wiring: SCK GPIO36, MISO GPIO37, MOSI GPIO35,
-and CS GPIO34. GPS records remain absent until a GPS source is added.
-
-For a different checkout or packaged shared library, override
-`FUSION_SHARED_DIR` with its path. Keep the shared source and both projects on
-compatible commits when collecting replay data.
+The non-blocking logger records raw G5 ESP-NOW frames, decoded G5 packets, IMU
+samples, compass samples, GPS PVT records, and barometer samples when those
+sources are available. GPIO0 toggles logging and the Geek board's microSD uses
+the documented HSPI wiring: SCK GPIO36, MISO GPIO37, MOSI GPIO35, and CS
+GPIO34.
