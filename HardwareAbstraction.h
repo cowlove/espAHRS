@@ -25,6 +25,9 @@ struct HalSensorCalibration {
   // Rotation from the installed sensor frame into the aircraft frame.
   float sensorPitchOffsetDeg;
   float sensorRollOffsetDeg;
+  float sensorYawOffsetDeg;
+  // Bias and polarity are in raw installed-sensor axes and are applied before
+  // the sensor-to-aircraft mounting rotation.
   float gyroBiasDegSec[3];
   float gyroAxisSign[3];
 
@@ -37,15 +40,21 @@ struct HalSensorCalibration {
   HalCompassCalibration compass[2];
 };
 
-inline void halMakeSensorFrameRotation(float pitchDeg, float rollDeg,
+inline void halMakeSensorFrameRotation(float pitchDeg, float rollDeg, float yawDeg,
                                        float matrix[3][3]) {
   const float pitch = pitchDeg * 0.01745329252f;
   const float roll = rollDeg * 0.01745329252f;
+  const float yaw = yawDeg * 0.01745329252f;
   const float cp = cosf(pitch), sp = sinf(pitch);
   const float cr = cosf(roll), sr = sinf(roll);
-  matrix[0][0] = cp;       matrix[0][1] = 0.0f; matrix[0][2] = sp;
-  matrix[1][0] = sr * sp;   matrix[1][1] = cr;   matrix[1][2] = -sr * cp;
-  matrix[2][0] = -cr * sp;  matrix[2][1] = sr;   matrix[2][2] = cr * cp;
+  const float cy = cosf(yaw), sy = sinf(yaw);
+  matrix[0][0] = cy * cp; matrix[0][1] = -sy * cp; matrix[0][2] = sp;
+  matrix[1][0] = cy * sr * sp + sy * cr;
+  matrix[1][1] = -sy * sr * sp + cy * cr;
+  matrix[1][2] = -sr * cp;
+  matrix[2][0] = -cy * cr * sp + sy * sr;
+  matrix[2][1] = sy * cr * sp + cy * sr;
+  matrix[2][2] = cr * cp;
 }
 
 inline void halRotateVector(const float matrix[3][3], float &x, float &y,
@@ -96,7 +105,7 @@ constexpr HalHardwareProfile makeGeekS3Profile() {
     HalDisplayKind::GeekS3_ST7789,
     true, true,
     {
-      10.3f, 7.5f,
+      10.3f, 7.5f, 0.0f,
       {-0.48f, 0.05f, 0.16f},
       {1.0f, -1.0f, -1.0f},
       {-0.002f, -0.019f, 0.222f},

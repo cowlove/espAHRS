@@ -31,7 +31,7 @@ include ${ALIBS}/makeEspArduino/makeEspArduino.mk
 cat:
 	while sleep .01; do if [ -c ${PORT} ]; then stty -F ${PORT} -echo raw 115200 && cat ${PORT}; fi; done | tee ./cat.`basename ${PORT}`.out
 
-.PHONY: replay flight-results dipahrs-test
+.PHONY: replay flight-results dipahrs-test ahrs-kinematics-test
 replay:
 	$(CXX) -std=c++17 -O2 -I. replay.cpp AircraftAHRS.cpp -o replay
 
@@ -46,3 +46,7 @@ flight-results: replay
 dipahrs-test:
 	$(CXX) -std=c++11 -O2 -I. dipahrs_test.cpp -o /tmp/esp32-s3-geek-dipahrs-test
 	/tmp/esp32-s3-geek-dipahrs-test
+
+ahrs-kinematics-test:
+	$(CXX) -std=c++17 -O2 -I. aircraft_ahrs_kinematics_test.cpp AircraftAHRS.cpp -o /tmp/esp32-s3-geek-ahrs-kinematics-test
+	/tmp/esp32-s3-geek-ahrs-kinematics-test

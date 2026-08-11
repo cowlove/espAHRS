@@ -31,6 +31,15 @@ public:
         float gyroAxisSignX = 1.0f;
         float gyroAxisSignY = 1.0f;
         float gyroAxisSignZ = 1.0f;
+        // Per-axis scale factors applied after bias/sign correction.
+        float gyroGainX = 1.0f;
+        float gyroGainY = 1.0f;
+        float gyroGainZ = 1.0f;
+        // Per-sample aircraft-frame gyro outlier gate.  A rejected sample
+        // holds the previously accepted body-rate vector.
+        float gyroRateLimitDegSec = 60.0f;
+        // Fixed per-sample gyro integration weight. Zero uses measured dt.
+        float gyroIntegrationDtSec = 0.020f;
         float accelBiasXMps2 = 0.0f;
         float accelBiasYMps2 = 0.0f;
         float accelBiasZMps2 = 0.0f;
@@ -47,7 +56,7 @@ public:
         // Magnetic turn-rate bank is currently disabled pending investigation
         // of noise and occasional discontinuity glitches.
         float magTurnRateBankWeight = 0.0f;
-        float yawGyroTurnRateBankWeight = 1.0f;
+        float yawGyroTurnRateBankWeight = 0.0f;
         // Lateral specific force is an additive uncoordinated-flight residual.
         float accelerometerRollWeight = 0.4f;
         // Final normalized fusion of turn-rate/accelerometer roll and DipAHRS.
@@ -139,6 +148,15 @@ public:
         uint32_t gpsAgeMs = UINT32_MAX;
         uint32_t baroAgeMs = UINT32_MAX;
         uint32_t accelerometerSampleAgeMs = UINT32_MAX;
+        float lastImuDtSec = 0;
+        float lastPitchGyroDeltaDeg = 0;
+        float lastPitchAccelCorrectionDeltaDeg = 0;
+        float lastPitchGpsCorrectionDeltaDeg = 0;
+        float lastPitchBodyRateDegSec = 0;
+        float lastYawBodyRateDegSec = 0;
+        float lastPitchQContributionDegSec = 0;
+        float lastPitchYawCouplingDegSec = 0;
+        bool lastGyroSampleAccepted = false;
     };
 
     AircraftAHRS();
@@ -148,6 +166,15 @@ public:
                    uint32_t nowUs, float accelXMps2 = 0.0f,
                    float accelYMps2 = 0.0f, float accelZMps2 = 0.0f,
                    bool accelerometerValid = false);
+    // Rotation from the raw installed sensor frame into aircraft X-forward,
+    // Y-right, Z-down. Raw gyro bias/polarity correction occurs before this
+    // rotation; aircraft-frame gains and Euler conversion occur after it.
+    void setSensorFrameRotation(const float matrix[3][3]);
+    static void bodyRatesToEulerRates(float rollDeg, float pitchDeg,
+                                      float pDegSec, float qDegSec,
+                                      float rDegSec, float &rollRateDegSec,
+                                      float &pitchRateDegSec,
+                                      float &headingRateDegSec);
     void updateGps(float trackDeg, float groundSpeedMps, float altitudeM,
                    bool fixValid, uint32_t nowMs);
     // Supply calibrated body-frame magnetic vectors. Calibration is kept
@@ -185,6 +212,13 @@ private:
     float filteredGpsLongitudinalAccelerationMps2_ = 0;
     float filteredMagTurnRateRadSec_ = 0;
     float filteredYawGyroTurnRateRadSec_ = 0;
+    float acceptedGyroXDegSec_ = 0;
+    float acceptedGyroYDegSec_ = 0;
+    float acceptedGyroZDegSec_ = 0;
+    bool haveAcceptedGyro_ = false;
+    float sensorFrameRotation_[3][3] = {
+        {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}
+    };
     float filteredFusedHeadingDeg_ = 0;
     float previousMagHeadingDeg_ = 0;
     uint32_t lastMagHeadingMs_ = 0;

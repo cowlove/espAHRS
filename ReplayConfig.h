@@ -16,6 +16,7 @@ struct ReplayConfig {
     float g5TimeOffsetMs = 20.0f;
     float sensorPitchOffsetDeg = 11.7f;
     float sensorRollOffsetDeg = 6.0f;
+    float sensorYawOffsetDeg = 0.0f;
     float accelInputScale = 1.0f;
 
     ReplayConfig() {
@@ -23,6 +24,7 @@ struct ReplayConfig {
         const HalSensorCalibration &calibration = hardware.calibration;
         sensorPitchOffsetDeg = calibration.sensorPitchOffsetDeg;
         sensorRollOffsetDeg = calibration.sensorRollOffsetDeg;
+        sensorYawOffsetDeg = calibration.sensorYawOffsetDeg;
         ahrs.gyroBiasXDegSec = calibration.gyroBiasDegSec[0];
         ahrs.gyroBiasYDegSec = calibration.gyroBiasDegSec[1];
         ahrs.gyroBiasZDegSec = calibration.gyroBiasDegSec[2];
@@ -56,6 +58,11 @@ struct ReplayConfig {
             {"gyro_axis_sign_x", &ahrs.gyroAxisSignX},
             {"gyro_axis_sign_y", &ahrs.gyroAxisSignY},
             {"gyro_axis_sign_z", &ahrs.gyroAxisSignZ},
+            {"gyro_gain_x", &ahrs.gyroGainX},
+            {"gyro_gain_y", &ahrs.gyroGainY},
+            {"gyro_gain_z", &ahrs.gyroGainZ},
+            {"gyro_rate_limit_deg_sec", &ahrs.gyroRateLimitDegSec},
+            {"gyro_integration_dt_sec", &ahrs.gyroIntegrationDtSec},
             {"accel_bias_x_mps2", &ahrs.accelBiasXMps2},
             {"accel_bias_y_mps2", &ahrs.accelBiasYMps2},
             {"accel_bias_z_mps2", &ahrs.accelBiasZMps2},
@@ -99,6 +106,9 @@ struct ReplayConfig {
         if (std::strcmp(name, "sensor_roll_offset_deg") == 0) {
             sensorRollOffsetDeg = value; return true;
         }
+        if (std::strcmp(name, "sensor_yaw_offset_deg") == 0) {
+            sensorYawOffsetDeg = value; return true;
+        }
         if (std::strcmp(name, "accel_input_scale") == 0) {
             accelInputScale = value; return true;
         }
@@ -115,6 +125,8 @@ struct ReplayConfig {
                    "gps_heading_weight "
                    "gyro_bias_x_deg_sec gyro_bias_y_deg_sec gyro_bias_z_deg_sec "
                    "gyro_axis_sign_x gyro_axis_sign_y gyro_axis_sign_z "
+                   "gyro_rate_limit_deg_sec "
+                   "gyro_integration_dt_sec "
                    "accel_bias_x_mps2 accel_bias_y_mps2 accel_bias_z_mps2 "
                    "vertical_rate_filter_sec "
                    "gps_timeout_sec accel_correction_sec accel_filter_sec "
@@ -129,6 +141,6 @@ struct ReplayConfig {
                    "min_ground_speed_mps baro_alt_filter_sec "
                    "baro_rate_filter_sec baro_gps_bias_sec baro_timeout_sec "
                    "g5_heading_offset_deg g5_time_offset_ms "
-                   "sensor_pitch_offset_deg sensor_roll_offset_deg accel_input_scale");
+                   "sensor_pitch_offset_deg sensor_roll_offset_deg sensor_yaw_offset_deg accel_input_scale");
     }
 };

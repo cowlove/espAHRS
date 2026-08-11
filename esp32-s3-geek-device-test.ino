@@ -342,6 +342,19 @@ void setupBerryIMU() {
     imuOk = imu.begin();
     if (imuOk) imuKind = ImuKind::LSM9DS1;
   }
+  if (imuKind == ImuKind::ICM20948) {
+    // ICM-20948 ODR = 1.1 kHz/(1+gyro_div), 1.125 kHz/(1+accel_div).
+    // Divisor 21 gives 50 Hz gyro and approximately 51.1 Hz accel output.
+    // This changes the production rate; it does not make the MCU block for
+    // 20 ms.  The sensor's DLPF remains a separate configuration concern.
+    ICM_20948_smplrt_t sampleRate{};
+    sampleRate.g = 21;
+    sampleRate.a = 21;
+    ICM_20948_Status_e status = icm20948.setSampleRate(
+        ICM_20948_Internal_Acc | ICM_20948_Internal_Gyr, sampleRate);
+    Serial.printf("ICM ODR configuration: %s (gyro=50Hz, accel=51Hz)\n",
+                  status == ICM_20948_Stat_Ok ? "OK" : "FAILED");
+  }
   baroOk = baro.begin(0x76);
   if (!baroOk) baroOk = baro.begin(0x77);
   if (imuKind == ImuKind::LSM9DS1) {
@@ -422,7 +435,9 @@ void setup() {
   if (HARDWARE.hasLogButton) pinMode(HARDWARE.logButton, INPUT_PULLUP);
   halMakeSensorFrameRotation(HARDWARE.calibration.sensorPitchOffsetDeg,
                              HARDWARE.calibration.sensorRollOffsetDeg,
+                             HARDWARE.calibration.sensorYawOffsetDeg,
                              sensorFrameRotation);
+  ahrs.setSensorFrameRotation(sensorFrameRotation);
   ahrs.setCompassCalibration(0, HARDWARE.calibration.compass[0].offset,
                              HARDWARE.calibration.compass[0].matrix);
   ahrs.setCompassCalibration(1, HARDWARE.calibration.compass[1].offset,
@@ -501,14 +516,10 @@ void loop() {
       gx, gy, gz, ax, ay, az, imuSampleValid);
     if (sessionLog.active()) sessionLog.appendCompass(0, nowUs,
       mx, my, mz, compass0Valid);
-    // Preserve raw values in the log.  Only the AHRS path receives the
-    // installed-sensor-to-aircraft frame rotation from the HAL profile.
-    float ahrsGx = gx, ahrsGy = gy, ahrsGz = gz;
-    float ahrsAx = ax, ahrsAy = ay, ahrsAz = az;
-    halRotateVector(sensorFrameRotation, ahrsGx, ahrsGy, ahrsGz);
-    halRotateVector(sensorFrameRotation, ahrsAx, ahrsAy, ahrsAz);
-    ahrs.updateImu(ahrsGx, ahrsGy, ahrsGz, nowUs,
-                   ahrsAx, ahrsAy, ahrsAz, imuSampleValid);
+    // Preserve raw values in the log and pass the same raw sensor frame into
+    // the AHRS. It applies gyro bias/polarity before the common mounting
+    // rotation, then performs aircraft-frame propagation.
+    ahrs.updateImu(gx, gy, gz, nowUs, ax, ay, az, imuSampleValid);
     ahrs.updateCompass(0, mx, my, mz, compass0Valid, millis());
   }
   if (baroOk) {

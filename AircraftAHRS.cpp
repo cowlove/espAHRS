@@ -7,10 +7,36 @@ namespace {
 constexpr float DEG_TO_RAD_F = 0.01745329251994329577f;
 constexpr float RAD_TO_DEG_F = 57.29577951308232088f;
 constexpr float GRAVITY_MPS2 = 9.80665f;
+void rotateVector(const float matrix[3][3], float &x, float &y, float &z) {
+    const float a = matrix[0][0] * x + matrix[0][1] * y + matrix[0][2] * z;
+    const float b = matrix[1][0] * x + matrix[1][1] * y + matrix[1][2] * z;
+    const float c = matrix[2][0] * x + matrix[2][1] * y + matrix[2][2] * z;
+    x = a; y = b; z = c;
+}
 }
 
 AircraftAHRS::AircraftAHRS() : config_(Config()) {}
 AircraftAHRS::AircraftAHRS(const Config &config) : config_(config) {}
+
+void AircraftAHRS::setSensorFrameRotation(const float matrix[3][3]) {
+    memcpy(sensorFrameRotation_, matrix, sizeof(sensorFrameRotation_));
+}
+
+void AircraftAHRS::bodyRatesToEulerRates(
+        float rollDeg, float pitchDeg, float pDegSec, float qDegSec,
+        float rDegSec, float &rollRateDegSec, float &pitchRateDegSec,
+        float &headingRateDegSec) {
+    const float phi = rollDeg * DEG_TO_RAD_F;
+    const float theta = pitchDeg * DEG_TO_RAD_F;
+    float cosTheta = cosf(theta);
+    if (fabsf(cosTheta) < 0.1f) cosTheta = copysignf(0.1f, cosTheta);
+    const float tanTheta = sinf(theta) / cosTheta;
+    rollRateDegSec = pDegSec + tanTheta *
+        (qDegSec * sinf(phi) + rDegSec * cosf(phi));
+    pitchRateDegSec = qDegSec * cosf(phi) - rDegSec * sinf(phi);
+    headingRateDegSec =
+        (qDegSec * sinf(phi) + rDegSec * cosf(phi)) / cosTheta;
+}
 
 void AircraftAHRS::setCompassCalibration(uint8_t source, const float offset[3],
                                           const float matrix[3][3]) {
@@ -48,6 +74,8 @@ void AircraftAHRS::reset() {
     filteredGpsLongitudinalAccelerationMps2_ = 0;
     filteredMagTurnRateRadSec_ = 0;
     filteredYawGyroTurnRateRadSec_ = 0;
+    acceptedGyroXDegSec_ = acceptedGyroYDegSec_ = acceptedGyroZDegSec_ = 0;
+    haveAcceptedGyro_ = false;
     filteredFusedHeadingDeg_ = 0;
     previousMagHeadingDeg_ = 0;
     lastMagHeadingMs_ = 0;
@@ -302,12 +330,20 @@ void AircraftAHRS::updateRollCorrectionTarget(bool accelerometerResidualValid) {
 void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
                              uint32_t nowUs, float accelX, float accelY,
                              float accelZ, bool accelerometerValid) {
+    state_.lastPitchAccelCorrectionDeltaDeg = 0;
+    state_.lastPitchGpsCorrectionDeltaDeg = 0;
+    state_.lastGyroSampleAccepted = true;
     pDegSec -= config_.gyroBiasXDegSec;
     qDegSec -= config_.gyroBiasYDegSec;
     rDegSec -= config_.gyroBiasZDegSec;
     pDegSec *= config_.gyroAxisSignX;
     qDegSec *= config_.gyroAxisSignY;
     rDegSec *= config_.gyroAxisSignZ;
+    rotateVector(sensorFrameRotation_, pDegSec, qDegSec, rDegSec);
+    pDegSec *= config_.gyroGainX;
+    qDegSec *= config_.gyroGainY;
+    rDegSec *= config_.gyroGainZ;
+    rotateVector(sensorFrameRotation_, accelX, accelY, accelZ);
     accelX -= config_.accelBiasXMps2;
     accelY -= config_.accelBiasYMps2;
     accelZ -= config_.accelBiasZMps2;
@@ -316,31 +352,53 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
         return;
     }
     float dt = (uint32_t)(nowUs - lastImuUs_) * 1.0e-6f;
+    state_.lastImuDtSec = dt;
     lastImuUs_ = nowUs;
     if (dt <= 0 || dt > 0.1f) return;
 
+    const float gyroLimit = config_.gyroRateLimitDegSec;
+    if (gyroLimit > 0.0f &&
+        (fabsf(pDegSec) > gyroLimit || fabsf(qDegSec) > gyroLimit ||
+         fabsf(rDegSec) > gyroLimit)) {
+        state_.lastGyroSampleAccepted = false;
+        if (haveAcceptedGyro_) {
+            pDegSec = acceptedGyroXDegSec_;
+            qDegSec = acceptedGyroYDegSec_;
+            rDegSec = acceptedGyroZDegSec_;
+        } else {
+            pDegSec = qDegSec = rDegSec = 0.0f;
+        }
+    } else {
+        acceptedGyroXDegSec_ = pDegSec;
+        acceptedGyroYDegSec_ = qDegSec;
+        acceptedGyroZDegSec_ = rDegSec;
+        haveAcceptedGyro_ = true;
+    }
+
     // Standard body-rate to Euler-rate conversion (aircraft x-forward,
-    // y-right, z-down). Mounting-axis remapping belongs at the call site.
+    // y-right, z-down). Raw-axis correction and mounting rotation above make
+    // p/q/r aircraft-frame body rates before they reach this conversion.
     float phi = state_.rollDeg * DEG_TO_RAD_F;
-    float theta = state_.pitchDeg * DEG_TO_RAD_F;
-    float cosTheta = cosf(theta);
-    if (fabsf(cosTheta) < 0.1f) cosTheta = copysignf(0.1f, cosTheta);
-    float tanTheta = sinf(theta) / cosTheta;
-    float p = pDegSec * DEG_TO_RAD_F;
-    float q = qDegSec * DEG_TO_RAD_F;
-    float r = rDegSec * DEG_TO_RAD_F;
-    float phiDot = p + tanTheta * (q * sinf(phi) + r * cosf(phi));
-    float thetaDot = q * cosf(phi) - r * sinf(phi);
-    float psiDot = (q * sinf(phi) + r * cosf(phi)) / cosTheta;
-    state_.rollDeg = wrap180(state_.rollDeg + phiDot * dt * RAD_TO_DEG_F);
-    state_.pitchDeg = wrap180(state_.pitchDeg + thetaDot * dt * RAD_TO_DEG_F);
-    state_.headingDeg = wrap360(state_.headingDeg + psiDot * dt * RAD_TO_DEG_F);
+    float phiDotDegSec, thetaDotDegSec, psiDotDegSec;
+    bodyRatesToEulerRates(state_.rollDeg, state_.pitchDeg,
+                          pDegSec, qDegSec, rDegSec,
+                          phiDotDegSec, thetaDotDegSec, psiDotDegSec);
+    state_.lastPitchBodyRateDegSec = qDegSec;
+    state_.lastYawBodyRateDegSec = rDegSec;
+    state_.lastPitchQContributionDegSec = qDegSec * cosf(phi);
+    state_.lastPitchYawCouplingDegSec = -rDegSec * sinf(phi);
+    float integrationDt = config_.gyroIntegrationDtSec > 0.0f
+        ? config_.gyroIntegrationDtSec : dt;
+    state_.lastPitchGyroDeltaDeg = thetaDotDegSec * integrationDt;
+    state_.pitchDeg = wrap180(state_.pitchDeg + state_.lastPitchGyroDeltaDeg);
+    state_.rollDeg = wrap180(state_.rollDeg + phiDotDegSec * integrationDt);
+    state_.headingDeg = wrap360(state_.headingDeg + psiDotDegSec * integrationDt);
 
     // Gyro-only turn-rate bank estimate. Ground speed supplies the radius-to-
     // bank conversion but no GPS heading or track derivative enters here.
     float yawBlend = correctionFraction(dt, config_.yawGyroDerivativeTimeSec);
     filteredYawGyroTurnRateRadSec_ +=
-        yawBlend * (r - filteredYawGyroTurnRateRadSec_);
+        yawBlend * (rDegSec * DEG_TO_RAD_F - filteredYawGyroTurnRateRadSec_);
     state_.yawGyroTurnRateBankValid =
         state_.gpsValid &&
         state_.groundSpeedMps >= config_.minimumGroundSpeedMps;
@@ -431,8 +489,9 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
             state_.pitchCorrectionTargetDeg = accelPitch;
             float pitchBlend = correctionFraction(
                 accelAidingDt, config_.pitchGravityCorrectionTimeSec);
-            state_.pitchDeg += pitchBlend *
+            state_.lastPitchAccelCorrectionDeltaDeg = pitchBlend *
                 wrap180(state_.pitchCorrectionTargetDeg - state_.pitchDeg);
+            state_.pitchDeg += state_.lastPitchAccelCorrectionDeltaDeg;
             state_.pitchGravityAidingValid = true;
             state_.accelerometerAidingValid = true;
         }
@@ -519,8 +578,10 @@ void AircraftAHRS::updateGps(float trackDeg, float speed, float altitudeM,
         state_.verticalAidingValid = true; // GPS vertical rate is available here.
 
         float pitchReference = state_.gpsFlightPathDeg + config_.angleOfAttackDeg;
-        state_.pitchDeg += correctionFraction(dt, config_.pitchCorrectionTimeSec) *
-                           wrap180(pitchReference - state_.pitchDeg);
+        state_.lastPitchGpsCorrectionDeltaDeg =
+            correctionFraction(dt, config_.pitchCorrectionTimeSec) *
+            wrap180(pitchReference - state_.pitchDeg);
+        state_.pitchDeg += state_.lastPitchGpsCorrectionDeltaDeg;
         state_.kinematicAidingValid = true;
         state_.headingValid = true;
     } else if (moving && !state_.headingValid) {

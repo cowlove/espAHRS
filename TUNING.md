@@ -124,6 +124,7 @@ Useful first sweeps include:
 | `g5_time_offset_ms` | ms | 20 | Effective G5 latency used when selecting the AHRS state for a G5 comparison. |
 | `sensor_pitch_offset_deg` | deg | HAL | Sensor-to-aircraft pitch mounting offset. The same rigid rotation is applied to gyro, accelerometer, and compass vectors. |
 | `sensor_roll_offset_deg` | deg | HAL | Sensor-to-aircraft roll mounting offset. |
+| `sensor_yaw_offset_deg` | deg | 0 | Sensor-to-aircraft yaw mounting offset. |
 | `accel_input_scale` | — | 1 | Replay-only scale applied to logged accelerometer input; useful for diagnosing unit-conversion problems. |
 
 The current GEEK-S3 HAL defaults are the calibrated values, rather than the
@@ -134,17 +135,24 @@ the exact calibration used by a replay.
 
 | Parameter | Units | Default | Meaning |
 |---|---:|---:|---|
-| `gyro_bias_x_deg_sec` | deg/s | HAL | Bias subtracted from the aircraft-frame X gyro channel before integration. |
+| `gyro_bias_x_deg_sec` | deg/s | HAL | Bias subtracted from the raw sensor-frame X gyro channel before mounting rotation. |
 | `gyro_bias_y_deg_sec` | deg/s | HAL | Bias subtracted from Y. |
 | `gyro_bias_z_deg_sec` | deg/s | HAL | Bias subtracted from Z. |
-| `gyro_axis_sign_x` | sign | HAL | Polarity multiplier for X, normally `1` or `-1`. |
+| `gyro_gain_x` | — | 1.0 | Scale applied to corrected aircraft-frame X gyro rate. |
+| `gyro_gain_y` | — | 1.0 | Scale applied to corrected aircraft-frame Y gyro rate. |
+| `gyro_gain_z` | — | 1.0 | Scale applied to corrected aircraft-frame Z gyro rate. |
+| `gyro_axis_sign_x` | sign | HAL | Raw sensor-frame X polarity multiplier, normally `1` or `-1`; applied before mounting rotation. |
 | `gyro_axis_sign_y` | sign | HAL | Polarity multiplier for Y. |
 | `gyro_axis_sign_z` | sign | HAL | Polarity multiplier for Z. |
+| `gyro_rate_limit_deg_sec` | deg/s | 60 | Per-sample aircraft-frame gyro outlier limit; rejected samples hold the previous accepted gyro vector. |
+| `gyro_integration_dt_sec` | s | 0.020 | Fixed gyro integration weight per sample; zero uses measured sample interval. |
 | `accel_bias_x_mps2` | m/s² | 0 or HAL | Bias subtracted from X acceleration. |
 | `accel_bias_y_mps2` | m/s² | 0 or HAL | Bias subtracted from Y acceleration. |
 | `accel_bias_z_mps2` | m/s² | 0 or HAL | Bias subtracted from Z acceleration. |
 
-These are applied before the AHRS equations. A gyro bias error accumulates
+The processing order is raw bias subtraction, raw-axis polarity, common
+sensor-to-aircraft mounting rotation, aircraft-frame gain, outlier gate, then
+body-rate-to-Euler-rate conversion. A gyro bias error accumulates
 with time, so it often appears as a steadily growing attitude error. A sign
 error usually produces an error that grows in the wrong direction during a
 deliberate motion and then gets pulled back by the correction target.

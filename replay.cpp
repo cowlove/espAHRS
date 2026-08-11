@@ -87,19 +87,20 @@ static void rotateVector(const float m[3][3], float &x, float &y, float &z) {
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s session.bin [--param name=value] [--roll-csv FILE] [--pitch-csv FILE] [--list-params]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s session.bin [--param name=value] [--roll-csv FILE] [--pitch-csv FILE] [--imu-csv FILE] [--list-params]\n", argv[0]);
         return 2;
     }
     ReplayConfig replayConfig;
     std::FILE *rollCsv = nullptr;
     std::FILE *pitchCsv = nullptr;
+    std::FILE *imuCsv = nullptr;
     for (int i = 2; i < argc; ++i) {
         if (std::strcmp(argv[i], "--list-params") == 0) { ReplayConfig::list(); return 0; }
         if (std::strcmp(argv[i], "--roll-csv") == 0 && i + 1 < argc) {
             rollCsv = std::fopen(argv[++i], "w");
             if (!rollCsv) { std::perror("--roll-csv"); return 1; }
             std::fprintf(rollCsv,
-                         "time_s,g5_roll,ahrs_roll,gps_turn_rate_bank_deg,"
+                         "time_s,g5_roll,ahrs_roll,gps_turn_rate_bank_deg,g5_slip_raw,"
                          "mag_turn_rate_bank_deg,yaw_gyro_turn_rate_bank_deg,"
                          "fused_turn_rate_bank_deg,accel_roll_deg,roll_correction_target_deg,"
                          "magnetic_roll_deg,magnetic_roll_innovation_deg,"
@@ -110,10 +111,16 @@ int main(int argc, char **argv) {
             pitchCsv = std::fopen(argv[++i], "w");
             if (!pitchCsv) { std::perror("--pitch-csv"); return 1; }
             std::fprintf(pitchCsv,
-                         "time_s,g5_pitch,ahrs_pitch,accel_pitch,"
-                         "raw_accel_pitch,gps_longitudinal_accel_mps2,"
+                         "time_s,g5_pitch,ahrs_pitch,accel_pitch,g5_slip_raw,"
+                         "raw_accel_pitch,raw_pitch_gyro_deg_sec,gps_longitudinal_accel_mps2,"
                          "accel_magnitude_mps2,accel_sample_accepted,"
                          "accel_sample_age_ms,gps_longitudinal_compensation_valid,error\n");
+            continue;
+        }
+        if (std::strcmp(argv[i], "--imu-csv") == 0 && i + 1 < argc) {
+            imuCsv = std::fopen(argv[++i], "w");
+            if (!imuCsv) { std::perror("--imu-csv"); return 1; }
+            std::fprintf(imuCsv, "time_s,dt_s,body_pitch_rate_deg_sec,yaw_rate_deg_sec,pitch_q_contribution_deg_sec,pitch_yaw_coupling_deg_sec,gyro_pitch_delta_deg,accel_pitch_correction_delta_deg,gps_pitch_correction_delta_deg,ahrs_roll,ahrs_pitch,gyro_sample_accepted\n");
             continue;
         }
         if (std::strcmp(argv[i], "--param") == 0 && i + 1 < argc) ++i;
@@ -136,7 +143,9 @@ int main(int argc, char **argv) {
     float sensorFrameRotation[3][3];
     halMakeSensorFrameRotation(replayConfig.sensorPitchOffsetDeg,
                                replayConfig.sensorRollOffsetDeg,
+                               replayConfig.sensorYawOffsetDeg,
                                sensorFrameRotation);
+    ahrs.setSensorFrameRotation(sensorFrameRotation);
     float compassFrameRotation[3][3];
     halMultiplyMatrix(sensorFrameRotation,
                       hardware.calibration.compass[0].frameRotation,
@@ -151,6 +160,7 @@ int main(int argc, char **argv) {
     uint32_t expectedSequence = 0, sequenceGaps = 0, sequenceDuplicates = 0;
     uint32_t firstSequenceAnomaly = UINT32_MAX;
     bool legacyAccelUnitsDetected = false;
+    float lastRawPitchGyroDegSec = NAN;
     ErrorMetric rollError, pitchError, headingError, magneticRollError;
     uint32_t magneticRollReferences = 0;
     std::vector<TimedError> timedErrors;
@@ -210,11 +220,23 @@ int main(int argc, char **argv) {
                 legacyAccelUnitsDetected = true;
             }
             r.accelX *= accelScale; r.accelY *= accelScale; r.accelZ *= accelScale;
-            rotateVector(sensorFrameRotation, r.gyroX, r.gyroY, r.gyroZ);
-            rotateVector(sensorFrameRotation, r.accelX, r.accelY, r.accelZ);
+            lastRawPitchGyroDegSec = r.gyroY;
             ahrs.updateImu(r.gyroX, r.gyroY, r.gyroZ,
                             static_cast<uint32_t>(h.timestampUs),
                             r.accelX, r.accelY, r.accelZ, r.valid != 0);
+            if (imuCsv) {
+                const auto &s = ahrs.state(nowMs);
+                std::fprintf(imuCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d\n",
+                             h.timestampUs * 1.0e-6, s.lastImuDtSec,
+                             s.lastPitchBodyRateDegSec, s.lastYawBodyRateDegSec,
+                             s.lastPitchQContributionDegSec,
+                             s.lastPitchYawCouplingDegSec,
+                             s.lastPitchGyroDeltaDeg,
+                             s.lastPitchAccelCorrectionDeltaDeg,
+                             s.lastPitchGpsCorrectionDeltaDeg,
+                             s.rollDeg, s.pitchDeg,
+                             s.lastGyroSampleAccepted ? 1 : 0);
+            }
             break;
         }
         case FUSION_LOG_COMPASS0:
@@ -240,10 +262,11 @@ int main(int argc, char **argv) {
         }
         default:
             if (h.type == FUSION_LOG_G5_PACKET) {
-                float g5Roll, g5Pitch, g5Heading;
+                float g5Roll, g5Pitch, g5Heading, g5Slip = NAN;
                 bool haveRoll = g5Field(payload, h.payloadLength, "R", g5Roll);
                 bool havePitch = g5Field(payload, h.payloadLength, "P", g5Pitch);
                 bool haveHeading = g5Field(payload, h.payloadLength, "HDG", g5Heading);
+                bool haveSlip = g5Field(payload, h.payloadLength, "SL", g5Slip);
                 // Administrative packets can contain unrelated fields named
                 // R= or P=.  Only a complete attitude tuple is a G5 reference.
                 if (haveRoll && havePitch && haveHeading) {
@@ -266,10 +289,11 @@ int main(int argc, char **argv) {
                                                                g5Heading + replayConfig.g5HeadingOffsetDeg) : 0.0f};
                     timedErrors.push_back(timed);
                     if (rollCsv) {
-                        std::fprintf(rollCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%.6f\n",
+                        std::fprintf(rollCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%.6f\n",
                                      h.timestampUs * 1.0e-6,
                                      g5Roll, state.rollDeg,
                                      state.gpsTurnRateBankDeg,
+                                     g5Slip,
                                      state.magTurnRateBankDeg,
                                      state.yawGyroTurnRateBankDeg,
                                      state.fusedTurnRateBankDeg,
@@ -283,12 +307,14 @@ int main(int argc, char **argv) {
                     }
                     if (pitchCsv) {
                         std::fprintf(pitchCsv,
-                                     "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,"
+                                     "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,"
                                      "%d,%u,%d,%.6f\n",
                                      h.timestampUs * 1.0e-6,
                                      g5Pitch, state.pitchDeg,
                                      state.accelerometerPitchDeg,
+                                     g5Slip,
                                      state.rawAccelerometerPitchDeg,
+                                     lastRawPitchGyroDegSec,
                                      state.gpsLongitudinalAccelerationMps2,
                                      state.accelerometerMagnitudeMps2,
                                      state.accelerometerSampleAccepted ? 1 : 0,
@@ -307,6 +333,7 @@ int main(int argc, char **argv) {
     const auto &s = ahrs.state(lastMs);
     if (rollCsv) std::fclose(rollCsv);
     if (pitchCsv) std::fclose(pitchCsv);
+    if (imuCsv) std::fclose(imuCsv);
     std::printf("REPLAY records=%llu bytes=%llu imu=%u compass0=%u compass1=%u baro=%u g5raw=%u g5=%u\n",
                 static_cast<unsigned long long>(records),
                 static_cast<unsigned long long>(bytes), counts[FUSION_LOG_IMU],
