@@ -34,21 +34,21 @@ public:
         float verticalSmoothnessWindowSec = 3.0f;
         float angleOfAttackDeg = 0.0f;
         float gpsTimeoutSec = 1.0f;
-        float accelCorrectionTimeSec = 12.0f;
-        float pitchKinematicCorrectionTimeSec = 12.0f;
-        float pitchGravityCorrectionTimeSec = 8.0f;
+        float accelCorrectionTimeSec = 5.0f;
+        float pitchKinematicCorrectionTimeSec = 20.0f;
+        float pitchGravityCorrectionTimeSec = 12.0f;
         float accelFilterTimeSec = 0.25f;
         float accelMagnitudeToleranceMps2 = 1.5f;
         float accelerometerRollWeight = 1.0f;
-        float turnBankWeight = 1.0f;
-        float gpsBankWeight = 0.0f;
+        float turnBankWeight = 0.0f;
+        float gpsBankWeight = 1.05f;
         float maximumBankTargetDeg = 60.0f;
         // NOAA WMM-2025 field at 47.6062 N, 122.3321 W, 0 km on 2026-08-09.
         // Declination is east-positive; inclination is down-positive in NED.
         float magneticDeclinationDeg = 14.89224f;
         float magneticInclinationDeg = 68.75569f;
         float magneticRollCorrectionTimeSec = 40.0f;
-        float magneticRollWeight = 0.25f;
+        float magneticRollWeight = 0.0f;
         float magneticFieldMagnitudeTolerance = 0.20f;
         float magneticRollMaximumDisagreementDeg = 15.0f;
         float magneticRollMinimumGeometry = 0.25f;
