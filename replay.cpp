@@ -109,7 +109,11 @@ int main(int argc, char **argv) {
         if (std::strcmp(argv[i], "--pitch-csv") == 0 && i + 1 < argc) {
             pitchCsv = std::fopen(argv[++i], "w");
             if (!pitchCsv) { std::perror("--pitch-csv"); return 1; }
-            std::fprintf(pitchCsv, "time_s,g5_pitch,ahrs_pitch,accel_pitch,error\n");
+            std::fprintf(pitchCsv,
+                         "time_s,g5_pitch,ahrs_pitch,accel_pitch,"
+                         "raw_accel_pitch,gps_longitudinal_accel_mps2,"
+                         "accel_magnitude_mps2,accel_sample_accepted,"
+                         "accel_sample_age_ms,gps_longitudinal_compensation_valid,error\n");
             continue;
         }
         if (std::strcmp(argv[i], "--param") == 0 && i + 1 < argc) ++i;
@@ -278,10 +282,18 @@ int main(int argc, char **argv) {
                                      state.rollDeg - g5Roll);
                     }
                     if (pitchCsv) {
-                        std::fprintf(pitchCsv, "%.6f,%.6f,%.6f,%.6f,%.6f\n",
+                        std::fprintf(pitchCsv,
+                                     "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,"
+                                     "%d,%u,%d,%.6f\n",
                                      h.timestampUs * 1.0e-6,
                                      g5Pitch, state.pitchDeg,
                                      state.accelerometerPitchDeg,
+                                     state.rawAccelerometerPitchDeg,
+                                     state.gpsLongitudinalAccelerationMps2,
+                                     state.accelerometerMagnitudeMps2,
+                                     state.accelerometerSampleAccepted ? 1 : 0,
+                                     state.accelerometerSampleAgeMs,
+                                     state.gpsLongitudinalCompensationValid ? 1 : 0,
                                      state.pitchDeg - g5Pitch);
                     }
                     ++g5Parsed;
@@ -336,8 +348,8 @@ int main(int argc, char **argv) {
                 "gps_bank=%.3f mag_bank=%.3f yaw_gyro_bank=%.3f fused_bank=%.3f "
                 "accel_roll=%.3f roll_target=%.3f "
                 "mag_roll=%.3f mag_innov=%.3f mag_disagree=%.3f mag_valid=%d "
-                "accel_pitch=%.3f pitch_target=%.3f vert_accel=%.3f "
-                "vert_stable=%d pitch_aiding=%d compass=%.3f valid=%d\n",
+                "accel_pitch=%.3f pitch_target=%.3f gps_long_accel=%.3f "
+                "pitch_aiding=%d compass=%.3f valid=%d\n",
                 s.rollDeg, s.pitchDeg, s.headingDeg, s.fusedHeadingDeg,
                 s.gpsTurnRateBankDeg, s.magTurnRateBankDeg,
                 s.yawGyroTurnRateBankDeg, s.fusedTurnRateBankDeg,
@@ -345,8 +357,8 @@ int main(int argc, char **argv) {
                 s.rollCorrectionTargetDeg, s.magneticRollDeg,
                 s.magneticRollInnovationDeg, s.magneticRollSourceDisagreementDeg,
                 s.magneticRollAidingValid ? 1 : 0, s.accelerometerPitchDeg,
-                s.pitchCorrectionTargetDeg, s.verticalAccelerationMps2,
-                s.verticalMotionStable ? 1 : 0, s.pitchGravityAidingValid ? 1 : 0,
+                s.pitchCorrectionTargetDeg, s.gpsLongitudinalAccelerationMps2,
+                s.pitchGravityAidingValid ? 1 : 0,
                 s.fusedCompassHeadingDeg,
                 s.compassAidingValid ? 1 : 0);
     return in.eof() ? 0 : 1;

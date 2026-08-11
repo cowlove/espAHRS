@@ -42,6 +42,9 @@ struct ReplayConfig {
             {"roll_correction_sec", &ahrs.rollCorrectionTimeSec},
             {"pitch_correction_sec", &ahrs.pitchCorrectionTimeSec},
             {"gps_derivative_sec", &ahrs.gpsDerivativeTimeSec},
+            {"gps_longitudinal_accel_filter_sec", &ahrs.gpsLongitudinalAccelerationFilterTimeSec},
+            {"gps_longitudinal_accel_compensation_gain", &ahrs.gpsLongitudinalAccelerationCompensationGain},
+            {"gps_longitudinal_accel_max_bank_deg", &ahrs.gpsLongitudinalAccelerationMaximumBankDeg},
             {"magnetic_derivative_sec", &ahrs.magneticDerivativeTimeSec},
             {"yaw_gyro_derivative_sec", &ahrs.yawGyroDerivativeTimeSec},
             {"fused_heading_filter_sec", &ahrs.fusedHeadingFilterTimeSec},
@@ -57,12 +60,9 @@ struct ReplayConfig {
             {"accel_bias_y_mps2", &ahrs.accelBiasYMps2},
             {"accel_bias_z_mps2", &ahrs.accelBiasZMps2},
             {"vertical_rate_filter_sec", &ahrs.verticalRateFilterTimeSec},
-            {"vertical_accel_tolerance_mps2", &ahrs.verticalAccelerationToleranceMps2},
-            {"vertical_smoothness_window_sec", &ahrs.verticalSmoothnessWindowSec},
             {"angle_of_attack_deg", &ahrs.angleOfAttackDeg},
             {"gps_timeout_sec", &ahrs.gpsTimeoutSec},
             {"accel_correction_sec", &ahrs.accelCorrectionTimeSec},
-            {"pitch_kinematic_correction_sec", &ahrs.pitchKinematicCorrectionTimeSec},
             {"pitch_gravity_correction_sec", &ahrs.pitchGravityCorrectionTimeSec},
             {"accel_filter_sec", &ahrs.accelFilterTimeSec},
             {"accel_tolerance_mps2", &ahrs.accelMagnitudeToleranceMps2},
@@ -107,16 +107,17 @@ struct ReplayConfig {
 
     static void list() {
         std::puts("tunable parameters: yaw_correction_sec roll_correction_sec "
-                   "pitch_correction_sec gps_derivative_sec angle_of_attack_deg "
+                   "pitch_correction_sec gps_derivative_sec gps_longitudinal_accel_filter_sec "
+                   "gps_longitudinal_accel_compensation_gain angle_of_attack_deg "
+                   "gps_longitudinal_accel_max_bank_deg "
                    "magnetic_derivative_sec yaw_gyro_derivative_sec "
                    "fused_heading_filter_sec gps_heading_speed_threshold_mps "
                    "gps_heading_weight "
                    "gyro_bias_x_deg_sec gyro_bias_y_deg_sec gyro_bias_z_deg_sec "
                    "gyro_axis_sign_x gyro_axis_sign_y gyro_axis_sign_z "
                    "accel_bias_x_mps2 accel_bias_y_mps2 accel_bias_z_mps2 "
-                   "vertical_rate_filter_sec vertical_accel_tolerance_mps2 "
-                   "vertical_smoothness_window_sec "
-                   "gps_timeout_sec accel_correction_sec pitch_kinematic_correction_sec accel_filter_sec "
+                   "vertical_rate_filter_sec "
+                   "gps_timeout_sec accel_correction_sec accel_filter_sec "
                    "pitch_gravity_correction_sec "
                    "accel_tolerance_mps2 gps_turn_rate_bank_weight "
                    "mag_turn_rate_bank_weight yaw_gyro_turn_rate_bank_weight "

@@ -161,9 +161,11 @@ trust gyro integration more.
 | `roll_correction_sec` | s | 4.0 | Fallback roll response when accelerometer aiding is unavailable. |
 | `pitch_correction_sec` | s | 8.0 | Response to the GPS flight-path/angle-of-attack pitch reference. |
 | `accel_correction_sec` | s | 5.0 | Response to the combined accelerometer/GPS-bank roll target. |
-| `pitch_kinematic_correction_sec` | s | 20.0 | Response to kinematic pitch correction when gravity-only pitch aiding is unavailable. |
-| `pitch_gravity_correction_sec` | s | 12.0 | Response to the gravity-derived pitch target when vertical motion is stable. |
+| `pitch_gravity_correction_sec` | s | 12.0 | Response to the longitudinal-acceleration-compensated accelerometer pitch target. |
 | `gps_derivative_sec` | s | 1.5 | Smoothing of GPS track rate used for turn-rate and bank estimation. |
+| `gps_longitudinal_accel_filter_sec` | s | 0.0 | Smoothing of GPS horizontal-velocity derivative projected onto fused aircraft heading. Zero uses each measured derivative directly. |
+| `gps_longitudinal_accel_compensation_gain` | — | 1.0 | Gain applied when subtracting projected GPS longitudinal acceleration from the accelerometer X component. |
+| `gps_longitudinal_accel_max_bank_deg` | deg | 10.0 | Maximum absolute GPS turn-rate bank estimate at which longitudinal acceleration compensation is used. |
 
 Do not compensate for a bad axis sign by making a correction time constant
 very small. Resolve frame and polarity errors first; otherwise the correction
@@ -176,13 +178,18 @@ loop can hide the real defect in one maneuver and amplify it in another.
 | `accel_filter_sec` | s | 0.25 | Low-pass time constant for the accepted accelerometer vector. |
 | `accel_tolerance_mps2` | m/s² | 1.5 | Allowed difference between filtered specific-force magnitude and 1 g. Outside this gate, gravity-derived roll/pitch aiding is disabled. |
 | `vertical_rate_filter_sec` | s | 1.5 | Smoothing of GPS altitude-rate and derived vertical acceleration. |
-| `vertical_accel_tolerance_mps2` | m/s² | 0.35 | Maximum filtered vertical acceleration considered compatible with gravity-only pitch aiding. |
-| `vertical_smoothness_window_sec` | s | 3.0 | Time the vertical-motion gate must remain good before gravity pitch aiding is enabled. |
 | `angle_of_attack_deg` | deg | 0 | Added to the GPS flight-path angle when forming the kinematic pitch reference. |
 
-The vertical-motion gate is deliberately conservative. It prevents the
-fore-aft accelerometer component from being interpreted as pitch during a
-climb, descent, or changing vertical rate.
+GPS altitude trend no longer gates accelerometer pitch aiding. Pure
+world-vertical acceleration changes specific-force magnitude rather than its
+direction, while the projected GPS horizontal-velocity derivative addresses
+the longitudinal acceleration that directly biases the accelerometer X/Z
+pitch observation.
+The near-1g magnitude gate remains conservative because flight replay showed
+that admitting coordinated-turn load as a pitch observation made pitch worse.
+Rejected samples do not reuse a stale accelerometer vector. Correction resumes
+at the next accepted sample using the elapsed aiding interval, capped at one
+second, so intermittent rejection does not weaken the configured time constant.
 
 ### GPS heading and turn-bank aiding
 

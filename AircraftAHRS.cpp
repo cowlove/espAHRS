@@ -44,19 +44,19 @@ void AircraftAHRS::reset() {
     compassMagnitude_[0] = compassMagnitude_[1] = 0.0f;
     compassRollGeometry_[0] = compassRollGeometry_[1] = 0.0f;
     filteredGpsTurnRateRadSec_ = filteredClimbRateMps_ = 0;
+    lastVelocityNorthMps_ = lastVelocityEastMps_ = 0;
+    filteredGpsLongitudinalAccelerationMps2_ = 0;
     filteredMagTurnRateRadSec_ = 0;
     filteredYawGyroTurnRateRadSec_ = 0;
     filteredFusedHeadingDeg_ = 0;
     previousMagHeadingDeg_ = 0;
     lastMagHeadingMs_ = 0;
     haveFusedHeading_ = false;
-    verticalAccelerationMps2_ = 0;
-    verticalSmoothSinceMs_ = 0;
-    verticalMotionStable_ = false;
     haveGpsHistory_ = false;
     filteredAccelX_ = filteredAccelY_ = 0;
     filteredAccelZ_ = -GRAVITY_MPS2;
     haveAccel_ = false;
+    lastAcceptedAccelUs_ = lastAccelAidingUs_ = 0;
     filteredBaroAltitudeM_ = filteredBaroRateMps_ = baroBiasM_ = 0;
     haveBaro_ = false;
 }
@@ -357,9 +357,15 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
     // The call site uses aircraft axes: X forward, Y right, Z down.  The
     // installed sensor convention currently reports approximately (0, 0, +g)
     // for a stationary level aircraft.
+    state_.accelerometerSampleAccepted = false;
     if (accelerometerValid) {
         float magnitude = sqrtf(accelX * accelX + accelY * accelY + accelZ * accelZ);
-        if (fabsf(magnitude - GRAVITY_MPS2) <= config_.accelMagnitudeToleranceMps2) {
+        state_.accelerometerMagnitudeMps2 = magnitude;
+        state_.accelerometerSampleAccepted =
+            fabsf(magnitude - GRAVITY_MPS2) <=
+            config_.accelMagnitudeToleranceMps2;
+        if (state_.accelerometerSampleAccepted) {
+            lastAcceptedAccelUs_ = nowUs;
             float alpha = correctionFraction(dt, config_.accelFilterTimeSec);
             if (!haveAccel_) {
                 filteredAccelX_ = accelX; filteredAccelY_ = accelY;
@@ -374,14 +380,20 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
 
     state_.accelerometerAidingValid = false;
     state_.pitchGravityAidingValid = false;
+    state_.gpsLongitudinalCompensationValid = false;
     bool accelerationQualityGood = false;
-    if (haveAccel_) {
+    if (state_.accelerometerSampleAccepted && haveAccel_) {
         float magnitude = sqrtf(filteredAccelX_ * filteredAccelX_ +
                                  filteredAccelY_ * filteredAccelY_ +
                                  filteredAccelZ_ * filteredAccelZ_);
         accelerationQualityGood = fabsf(magnitude - GRAVITY_MPS2) <=
                                   config_.accelMagnitudeToleranceMps2;
         if (accelerationQualityGood) {
+            float accelAidingDt = lastAccelAidingUs_
+                ? (uint32_t)(nowUs - lastAccelAidingUs_) * 1.0e-6f
+                : dt;
+            if (accelAidingDt > 1.0f) accelAidingDt = 1.0f;
+            lastAccelAidingUs_ = nowUs;
             // Undo the current roll before extracting the fore/aft tilt.  The
             // installed GEEK/ICM convention used by the current logs has
             // gravity approximately (0, 0, +g) when level and positive G5
@@ -389,30 +401,39 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
             float currentRoll = state_.rollDeg * DEG_TO_RAD_F;
             float correctedZ = -sinf(currentRoll) * filteredAccelY_ +
                                cosf(currentRoll) * filteredAccelZ_;
-            float accelPitch = atan2f(filteredAccelX_, correctedZ) * RAD_TO_DEG_F;
+            float rawAccelPitch =
+                atan2f(filteredAccelX_, correctedZ) * RAD_TO_DEG_F;
+            bool turnAllowsLongitudinalCompensation =
+                !state_.gpsTurnRateBankValid ||
+                fabsf(state_.gpsTurnRateBankDeg) <=
+                    config_.gpsLongitudinalAccelerationMaximumBankDeg;
+            state_.gpsLongitudinalCompensationValid =
+                state_.gpsLongitudinalAccelerationValid &&
+                turnAllowsLongitudinalCompensation;
+            float longitudinalCompensation =
+                state_.gpsLongitudinalCompensationValid
+                    ? config_.gpsLongitudinalAccelerationCompensationGain *
+                          state_.gpsLongitudinalAccelerationMps2
+                    : 0.0f;
+            float compensatedAccelX = filteredAccelX_ - longitudinalCompensation;
+            float accelPitch = atan2f(compensatedAccelX, correctedZ) * RAD_TO_DEG_F;
             float horizontal = sqrtf(filteredAccelX_ * filteredAccelX_ +
                                      filteredAccelZ_ * filteredAccelZ_);
             float accelRoll = atan2f(filteredAccelY_, horizontal) * RAD_TO_DEG_F;
             state_.accelerometerRollDeg = accelRoll;
+            state_.rawAccelerometerPitchDeg = rawAccelPitch;
             state_.accelerometerPitchDeg = accelPitch;
             updateRollCorrectionTarget(true);
-            float rollBlend = correctionFraction(dt, config_.accelCorrectionTimeSec);
+            float rollBlend = correctionFraction(
+                accelAidingDt, config_.accelCorrectionTimeSec);
             state_.rollDeg += rollBlend * wrap180(state_.rollCorrectionTargetDeg - state_.rollDeg);
 
-            if (verticalMotionStable_) {
-                state_.pitchCorrectionTargetDeg = accelPitch;
-                float pitchBlend = correctionFraction(
-                    dt, config_.pitchGravityCorrectionTimeSec);
-                state_.pitchDeg += pitchBlend *
-                    wrap180(state_.pitchCorrectionTargetDeg - state_.pitchDeg);
-                state_.pitchGravityAidingValid = true;
-            } else if (state_.kinematicAidingValid) {
-                float pitchTarget = state_.gpsFlightPathDeg + config_.angleOfAttackDeg;
-                state_.pitchCorrectionTargetDeg = pitchTarget;
-                float pitchBlend = correctionFraction(
-                    dt, config_.pitchKinematicCorrectionTimeSec);
-                state_.pitchDeg += pitchBlend * wrap180(accelPitch - pitchTarget);
-            }
+            state_.pitchCorrectionTargetDeg = accelPitch;
+            float pitchBlend = correctionFraction(
+                accelAidingDt, config_.pitchGravityCorrectionTimeSec);
+            state_.pitchDeg += pitchBlend *
+                wrap180(state_.pitchCorrectionTargetDeg - state_.pitchDeg);
+            state_.pitchGravityAidingValid = true;
             state_.accelerometerAidingValid = true;
         }
     }
@@ -432,9 +453,9 @@ void AircraftAHRS::updateGps(float trackDeg, float speed, float altitudeM,
     if (!fixValid) {
         state_.kinematicAidingValid = false;
         state_.gpsTurnRateBankValid = false;
-        verticalMotionStable_ = false;
-        verticalSmoothSinceMs_ = 0;
-        state_.verticalMotionStable = false;
+        state_.gpsLongitudinalAccelerationMps2 = 0;
+        state_.gpsLongitudinalAccelerationValid = false;
+        filteredGpsLongitudinalAccelerationMps2_ = 0;
         applyHeadingAiding(nowMs);
         return;
     }
@@ -451,33 +472,31 @@ void AircraftAHRS::updateGps(float trackDeg, float speed, float altitudeM,
     if (!moving) state_.kinematicAidingValid = false;
     float dt = lastGpsMs_ ? (uint32_t)(nowMs - lastGpsMs_) * 0.001f : 0;
 
-    // Use the GPS altitude stream as a conservative vertical-motion gate for
-    // gravity-based pitch aiding.  A slowly changing altitude is acceptable;
-    // a changing climb rate is treated as vertical acceleration and disables
-    // the pitch target until the stream is smooth again.
     if (dt > 0.02f && dt < 2.0f && lastGpsMs_) {
+        float accelerationNorthMps2 =
+            (state_.velocityNorthMps - lastVelocityNorthMps_) / dt;
+        float accelerationEastMps2 =
+            (state_.velocityEastMps - lastVelocityEastMps_) / dt;
+        float forwardHeadingDeg = state_.headingAidingValid
+            ? state_.fusedHeadingDeg : trackDeg;
+        float forwardHeadingRad = forwardHeadingDeg * DEG_TO_RAD_F;
+        float measuredLongitudinalAcceleration =
+            accelerationNorthMps2 * cosf(forwardHeadingRad) +
+            accelerationEastMps2 * sinf(forwardHeadingRad);
+        float longitudinalAccelerationBlend = correctionFraction(
+            dt, config_.gpsLongitudinalAccelerationFilterTimeSec);
+        filteredGpsLongitudinalAccelerationMps2_ +=
+            longitudinalAccelerationBlend *
+            (measuredLongitudinalAcceleration -
+             filteredGpsLongitudinalAccelerationMps2_);
+        state_.gpsLongitudinalAccelerationMps2 =
+            filteredGpsLongitudinalAccelerationMps2_;
+        state_.gpsLongitudinalAccelerationValid = true;
+
         float altitudeRate = (altitudeM - lastAltitudeM_) / dt;
         float rateBlend = correctionFraction(dt, config_.verticalRateFilterTimeSec);
-        float previousRate = filteredClimbRateMps_;
         filteredClimbRateMps_ += rateBlend * (altitudeRate - filteredClimbRateMps_);
-        float measuredVerticalAcceleration =
-            (filteredClimbRateMps_ - previousRate) / dt;
-        float accelBlend = correctionFraction(dt, config_.verticalRateFilterTimeSec);
-        verticalAccelerationMps2_ += accelBlend *
-            (measuredVerticalAcceleration - verticalAccelerationMps2_);
-        state_.verticalAccelerationMps2 = verticalAccelerationMps2_;
-        if (fabsf(verticalAccelerationMps2_) <=
-            config_.verticalAccelerationToleranceMps2) {
-            if (!verticalSmoothSinceMs_) verticalSmoothSinceMs_ = nowMs;
-            verticalMotionStable_ =
-                (uint32_t)(nowMs - verticalSmoothSinceMs_) >=
-                config_.verticalSmoothnessWindowSec * 1000.0f;
-        } else {
-            verticalSmoothSinceMs_ = 0;
-            verticalMotionStable_ = false;
-        }
     }
-    state_.verticalMotionStable = verticalMotionStable_;
 
     if (moving && haveGpsHistory_ && dt > 0.02f && dt < 2.0f) {
         float derivativeAlpha = correctionFraction(dt, config_.gpsDerivativeTimeSec);
@@ -513,6 +532,8 @@ void AircraftAHRS::updateGps(float trackDeg, float speed, float altitudeM,
 
     lastTrackDeg_ = trackDeg;
     lastAltitudeM_ = altitudeM;
+    lastVelocityNorthMps_ = state_.velocityNorthMps;
+    lastVelocityEastMps_ = state_.velocityEastMps;
     lastGpsMs_ = nowMs;
     haveGpsHistory_ = moving;
     applyHeadingAiding(nowMs);
@@ -565,11 +586,18 @@ const AircraftAHRS::State &AircraftAHRS::state(uint32_t nowMs) {
         state_.kinematicAidingValid = false;
         state_.gpsTurnRateBankValid = false;
         state_.yawGyroTurnRateBankValid = false;
-        verticalMotionStable_ = false;
-        verticalSmoothSinceMs_ = 0;
+        state_.gpsLongitudinalAccelerationMps2 = 0;
+        state_.gpsLongitudinalAccelerationValid = false;
+        filteredGpsLongitudinalAccelerationMps2_ = 0;
     }
     applyHeadingAiding(nowMs);
-    state_.verticalMotionStable = verticalMotionStable_;
+    if (lastAcceptedAccelUs_) {
+        int32_t ageUs = (int32_t)(nowMs * 1000U - lastAcceptedAccelUs_);
+        state_.accelerometerSampleAgeMs = ageUs > 0
+            ? (uint32_t)ageUs / 1000U : 0U;
+    } else {
+        state_.accelerometerSampleAgeMs = UINT32_MAX;
+    }
     state_.baroAgeMs = lastBaroMs_ ? (uint32_t)(nowMs - lastBaroMs_) : UINT32_MAX;
     state_.barometerValid = haveBaro_ && state_.baroAgeMs <= config_.baroTimeoutSec * 1000.0f;
     if (state_.barometerValid) {
