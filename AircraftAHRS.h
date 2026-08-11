@@ -49,7 +49,7 @@ public:
         float magTurnRateBankWeight = 0.0f;
         float yawGyroTurnRateBankWeight = 1.0f;
         // Lateral specific force is an additive uncoordinated-flight residual.
-        float accelerometerRollWeight = 1.0f;
+        float accelerometerRollWeight = 0.4f;
         // Final normalized fusion of turn-rate/accelerometer roll and DipAHRS.
         // DipAHRS roll is retained as a diagnostic input, but is disabled in
         // the roll correction target by default because the flight data shows
