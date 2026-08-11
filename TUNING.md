@@ -256,6 +256,23 @@ stream is present, but they remain part of the shared replay surface.
 
 ## Reading sweep results
 
+All roll and pitch comparisons and parameter sweeps use per-log centered
+errors by default. For each flight log and each axis independently, compute
+the mean reference offset
+
+`offset = mean(G5 angle - AHRS angle)`
+
+and score the residual
+
+`centered error = (G5 angle - AHRS angle) - offset`.
+
+This removes the constant G5-versus-AHRS reference bias from both roll and
+pitch before calculating MAE, RMSE, p95, or comparing sweep points. It is an
+evaluation-only adjustment: the offset must not be fed back into the AHRS or
+used as a gyro-bias estimate. Report raw signed offsets separately when they
+are diagnostically useful. A sweep that does not explicitly say otherwise
+must use this per-log, per-axis centered scoring rule.
+
 The replay prints signed bias, MAE, RMSE, maximum absolute error, and p95
 absolute error for roll, pitch, and heading. RMSE is useful for penalizing
 large excursions; p95 is useful for judging the typical worst-case behavior;
