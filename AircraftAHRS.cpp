@@ -337,7 +337,8 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
             state_.accelerometerPitchDeg = accelPitch;
             state_.rollCorrectionTargetDeg =
                 config_.accelerometerRollWeight * accelRoll +
-                config_.turnBankWeight * state_.bankTargetDeg;
+                config_.turnBankWeight * state_.bankTargetDeg +
+                config_.gpsBankWeight * state_.gpsBankDeg;
             float rollBlend = correctionFraction(dt, config_.accelCorrectionTimeSec);
             state_.rollDeg += rollBlend * wrap180(state_.rollCorrectionTargetDeg - state_.rollDeg);
 

@@ -40,6 +40,7 @@ public:
         float accelMagnitudeToleranceMps2 = 1.5f;
         float accelerometerRollWeight = 1.0f;
         float turnBankWeight = 1.0f;
+        float gpsBankWeight = 0.0f;
         float maximumBankTargetDeg = 60.0f;
         // NOAA WMM-2025 field at 47.6062 N, 122.3321 W, 0 km on 2026-08-09.
         // Declination is east-positive; inclination is down-positive in NED.

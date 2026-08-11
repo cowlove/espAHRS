@@ -65,6 +65,7 @@ struct ReplayConfig {
             {"accel_tolerance_mps2", &ahrs.accelMagnitudeToleranceMps2},
             {"accelerometer_roll_weight", &ahrs.accelerometerRollWeight},
             {"turn_bank_weight", &ahrs.turnBankWeight},
+            {"gps_bank_weight", &ahrs.gpsBankWeight},
             {"maximum_bank_target_deg", &ahrs.maximumBankTargetDeg},
             {"magnetic_declination_deg", &ahrs.magneticDeclinationDeg},
             {"magnetic_inclination_deg", &ahrs.magneticInclinationDeg},
@@ -112,7 +113,7 @@ struct ReplayConfig {
                    "vertical_smoothness_window_sec "
                    "gps_timeout_sec accel_correction_sec accel_filter_sec "
                    "pitch_gravity_correction_sec "
-                   "accel_tolerance_mps2 accelerometer_roll_weight turn_bank_weight "
+                   "accel_tolerance_mps2 accelerometer_roll_weight turn_bank_weight gps_bank_weight "
                    "maximum_bank_target_deg magnetic_declination_deg "
                    "magnetic_inclination_deg magnetic_roll_correction_sec "
                    "magnetic_roll_weight magnetic_field_magnitude_tolerance "
