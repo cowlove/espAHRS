@@ -43,10 +43,12 @@ void AircraftAHRS::reset() {
     compassRoll_[0] = compassRoll_[1] = 0.0f;
     compassMagnitude_[0] = compassMagnitude_[1] = 0.0f;
     compassRollGeometry_[0] = compassRollGeometry_[1] = 0.0f;
-    filteredTurnRateRadSec_ = filteredClimbRateMps_ = 0;
-    filteredFusedTurnRateRadSec_ = 0;
+    filteredGpsTurnRateRadSec_ = filteredClimbRateMps_ = 0;
+    filteredMagTurnRateRadSec_ = 0;
+    filteredYawGyroTurnRateRadSec_ = 0;
     filteredFusedHeadingDeg_ = 0;
-    previousFusedHeadingDeg_ = 0;
+    previousMagHeadingDeg_ = 0;
+    lastMagHeadingMs_ = 0;
     haveFusedHeading_ = false;
     verticalAccelerationMps2_ = 0;
     verticalSmoothSinceMs_ = 0;
@@ -66,7 +68,7 @@ void AircraftAHRS::updateCompass(uint8_t source, float x, float y, float z,
     if (!valid) {
         compassHave_[source] = false;
         state_.compassValid[source] = false;
-        applyHeadingAiding(nowMs);
+        applyHeadingAiding(nowMs, true);
         return;
     }
     float rawX = (x - cfg.offsetXM) * cfg.scaleX;
@@ -84,7 +86,7 @@ void AircraftAHRS::updateCompass(uint8_t source, float x, float y, float z,
         config_.magneticFieldMagnitudeTolerance) {
         compassHave_[source] = false;
         state_.compassValid[source] = false;
-        applyHeadingAiding(nowMs);
+        applyHeadingAiding(nowMs, true);
         return;
     }
     DipAHRS::Config dipConfig;
@@ -96,7 +98,7 @@ void AircraftAHRS::updateCompass(uint8_t source, float x, float y, float z,
                           state_.headingDeg, dipConfig, dipObservation)) {
         compassHave_[source] = false;
         state_.compassValid[source] = false;
-        applyHeadingAiding(nowMs);
+        applyHeadingAiding(nowMs, true);
         return;
     }
     compassRoll_[source] = dipObservation.rollDeg;
@@ -107,10 +109,11 @@ void AircraftAHRS::updateCompass(uint8_t source, float x, float y, float z,
     lastCompassMs_[source] = nowMs;
     state_.compassHeadingDeg[source] = compassHeading_[source];
     state_.compassValid[source] = true;
-    applyHeadingAiding(nowMs);
+    applyHeadingAiding(nowMs, true);
 }
 
-void AircraftAHRS::applyHeadingAiding(uint32_t nowMs) {
+void AircraftAHRS::applyHeadingAiding(uint32_t nowMs,
+                                      bool magneticHeadingUpdated) {
     float sumX = 0.0f, sumY = 0.0f, totalWeight = 0.0f;
     float rollSumX = 0.0f, rollSumY = 0.0f, rollTotalWeight = 0.0f;
     float sourceRoll[2] = {0.0f, 0.0f};
@@ -136,6 +139,29 @@ void AircraftAHRS::applyHeadingAiding(uint32_t nowMs) {
     float magneticHeading = compassAvailable ?
         wrap360(atan2f(sumY, sumX) * RAD_TO_DEG_F) : 0.0f;
     if (compassAvailable) state_.fusedCompassHeadingDeg = magneticHeading;
+
+    // This derivative is magnetic-only. GPS is deliberately excluded so its
+    // independent track derivative cannot be counted twice in roll fusion.
+    if (compassAvailable && magneticHeadingUpdated) {
+        float dt = lastMagHeadingMs_ ?
+            (uint32_t)(nowMs - lastMagHeadingMs_) * 0.001f : 0.0f;
+        if (dt > 0.0f && dt <= 2.0f) {
+            float rawRate = wrap180(magneticHeading - previousMagHeadingDeg_) *
+                            DEG_TO_RAD_F / dt;
+            float blend = correctionFraction(dt, config_.magneticDerivativeTimeSec);
+            filteredMagTurnRateRadSec_ +=
+                blend * (rawRate - filteredMagTurnRateRadSec_);
+            state_.magTurnRateBankDeg = atanf(
+                state_.groundSpeedMps * filteredMagTurnRateRadSec_ / GRAVITY_MPS2) *
+                RAD_TO_DEG_F;
+            state_.magTurnRateBankValid =
+                state_.groundSpeedMps >= config_.minimumGroundSpeedMps;
+        }
+        previousMagHeadingDeg_ = magneticHeading;
+        lastMagHeadingMs_ = nowMs;
+    } else if (!compassAvailable) {
+        state_.magTurnRateBankValid = false;
+    }
 
     state_.magneticRollAidingValid = false;
     state_.magneticRollSourceCount = static_cast<uint8_t>(rollSourceCount);
@@ -183,8 +209,6 @@ void AircraftAHRS::applyHeadingAiding(uint32_t nowMs) {
     if (fusedWeight <= 0.0f) {
         state_.compassAidingValid = false;
         state_.headingAidingValid = false;
-        state_.bankTargetDeg = 0.0f;
-        state_.fusedTurnRateDegSec = 0.0f;
         return;
     }
 
@@ -204,27 +228,9 @@ void AircraftAHRS::applyHeadingAiding(uint32_t nowMs) {
     state_.fusedHeadingDeg = filteredFusedHeadingDeg_;
 
     const uint32_t previousHeadingMs = lastHeadingAidingMs_;
-    // Derive turn rate from the filtered fused heading.  This uses the last
-    // filtered value rather than raw GPS/compass jumps, so changing source
-    // weights cannot create an artificial bank command.
     float headingDt = previousHeadingMs ?
         (uint32_t)(nowMs - previousHeadingMs) * 0.001f : 0.0f;
-    if (headingDt > 0.0f && headingDt <= 2.0f && haveFusedHeading_) {
-        float rawTurnRate = wrap180(filteredFusedHeadingDeg_ - previousFusedHeadingDeg_) /
-            headingDt * DEG_TO_RAD_F;
-        float blend = correctionFraction(headingDt, config_.gpsDerivativeTimeSec);
-        filteredFusedTurnRateRadSec_ += blend * (rawTurnRate - filteredFusedTurnRateRadSec_);
-    }
-    previousFusedHeadingDeg_ = filteredFusedHeadingDeg_;
     lastHeadingAidingMs_ = nowMs;
-
-    state_.fusedTurnRateDegSec = filteredFusedTurnRateRadSec_ * RAD_TO_DEG_F;
-    state_.gpsBankDeg = atanf(state_.groundSpeedMps * filteredTurnRateRadSec_ /
-                              GRAVITY_MPS2) * RAD_TO_DEG_F;
-    float bank = atanf(state_.groundSpeedMps * filteredFusedTurnRateRadSec_ /
-                       GRAVITY_MPS2) * RAD_TO_DEG_F;
-    state_.bankTargetDeg = fmaxf(-config_.maximumBankTargetDeg,
-                                 fminf(config_.maximumBankTargetDeg, bank));
 
     if (!state_.headingAidingValid) {
         state_.headingDeg = filteredFusedHeadingDeg_;
@@ -251,6 +257,46 @@ float AircraftAHRS::wrap360(float degrees) {
 
 float AircraftAHRS::correctionFraction(float dt, float timeConstant) {
     return timeConstant <= 0 ? 1 : 1 - expf(-dt / timeConstant);
+}
+
+void AircraftAHRS::updateRollCorrectionTarget(bool accelerometerResidualValid) {
+    float weightedBank = 0.0f;
+    float turnWeight = 0.0f;
+    auto addTurnBank = [&](bool valid, float bank, float weight) {
+        if (!valid || weight <= 0.0f) return;
+        weightedBank += weight * bank;
+        turnWeight += weight;
+    };
+    addTurnBank(state_.gpsTurnRateBankValid, state_.gpsTurnRateBankDeg,
+                config_.gpsTurnRateBankWeight);
+    addTurnBank(state_.magTurnRateBankValid, state_.magTurnRateBankDeg,
+                config_.magTurnRateBankWeight);
+    addTurnBank(state_.yawGyroTurnRateBankValid, state_.yawGyroTurnRateBankDeg,
+                config_.yawGyroTurnRateBankWeight);
+
+    float turnRateBank = turnWeight > 0.0f ? weightedBank / turnWeight : 0.0f;
+    if (accelerometerResidualValid) {
+        turnRateBank += config_.accelerometerRollWeight *
+                        state_.accelerometerRollDeg;
+    }
+    state_.fusedTurnRateBankDeg = fmaxf(-config_.maximumBankTargetDeg,
+        fminf(config_.maximumBankTargetDeg, turnRateBank));
+
+    float finalSum = 0.0f;
+    float finalWeight = 0.0f;
+    if ((turnWeight > 0.0f || accelerometerResidualValid) &&
+        config_.fusedTurnRateBankWeight > 0.0f) {
+        finalSum += config_.fusedTurnRateBankWeight *
+                    state_.fusedTurnRateBankDeg;
+        finalWeight += config_.fusedTurnRateBankWeight;
+    }
+    if (state_.magneticRollAidingValid && config_.dipAhrsRollWeight > 0.0f) {
+        finalSum += config_.dipAhrsRollWeight * state_.magneticRollDeg;
+        finalWeight += config_.dipAhrsRollWeight;
+    }
+    if (finalWeight > 0.0f) {
+        state_.rollCorrectionTargetDeg = finalSum / finalWeight;
+    }
 }
 
 void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
@@ -289,6 +335,20 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
     state_.rollDeg = wrap180(state_.rollDeg + phiDot * dt * RAD_TO_DEG_F);
     state_.pitchDeg = wrap180(state_.pitchDeg + thetaDot * dt * RAD_TO_DEG_F);
     state_.headingDeg = wrap360(state_.headingDeg + psiDot * dt * RAD_TO_DEG_F);
+
+    // Gyro-only turn-rate bank estimate. Ground speed supplies the radius-to-
+    // bank conversion but no GPS heading or track derivative enters here.
+    float yawBlend = correctionFraction(dt, config_.yawGyroDerivativeTimeSec);
+    filteredYawGyroTurnRateRadSec_ +=
+        yawBlend * (r - filteredYawGyroTurnRateRadSec_);
+    state_.yawGyroTurnRateBankValid =
+        state_.gpsValid &&
+        state_.groundSpeedMps >= config_.minimumGroundSpeedMps;
+    if (state_.yawGyroTurnRateBankValid) {
+        state_.yawGyroTurnRateBankDeg = atanf(
+            state_.groundSpeedMps * filteredYawGyroTurnRateRadSec_ / GRAVITY_MPS2) *
+            RAD_TO_DEG_F;
+    }
 
     // Accelerometers measure specific force, not gravity.  When the magnitude
     // is close to 1g they provide a useful roll observation.  The coordinated
@@ -335,10 +395,7 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
             float accelRoll = atan2f(filteredAccelY_, horizontal) * RAD_TO_DEG_F;
             state_.accelerometerRollDeg = accelRoll;
             state_.accelerometerPitchDeg = accelPitch;
-            state_.rollCorrectionTargetDeg =
-                config_.accelerometerRollWeight * accelRoll +
-                config_.turnBankWeight * state_.bankTargetDeg +
-                config_.gpsBankWeight * state_.gpsBankDeg;
+            updateRollCorrectionTarget(true);
             float rollBlend = correctionFraction(dt, config_.accelCorrectionTimeSec);
             state_.rollDeg += rollBlend * wrap180(state_.rollCorrectionTargetDeg - state_.rollDeg);
 
@@ -359,18 +416,13 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
             state_.accelerometerAidingValid = true;
         }
     }
-    if (!accelerationQualityGood && state_.headingAidingValid) {
+    if (!accelerationQualityGood &&
+        (state_.gpsTurnRateBankValid || state_.magTurnRateBankValid ||
+         state_.yawGyroTurnRateBankValid || state_.magneticRollAidingValid)) {
         float rollBlend = correctionFraction(dt, config_.rollCorrectionTimeSec);
-        state_.rollCorrectionTargetDeg = state_.bankTargetDeg;
-        state_.rollDeg += rollBlend * wrap180(state_.bankTargetDeg - state_.rollDeg);
-    }
-    if (state_.magneticRollAidingValid && config_.magneticRollWeight > 0.0f) {
-        const float magneticBlend = fminf(1.0f, config_.magneticRollWeight) *
-            correctionFraction(dt, config_.magneticRollCorrectionTimeSec);
-        state_.magneticRollInnovationDeg =
-            wrap180(state_.magneticRollDeg - state_.rollDeg);
-        state_.rollDeg += magneticBlend * state_.magneticRollInnovationDeg;
-        state_.rollDeg = wrap180(state_.rollDeg);
+        updateRollCorrectionTarget(false);
+        state_.rollDeg += rollBlend *
+            wrap180(state_.rollCorrectionTargetDeg - state_.rollDeg);
     }
 }
 
@@ -379,6 +431,7 @@ void AircraftAHRS::updateGps(float trackDeg, float speed, float altitudeM,
     state_.gpsValid = fixValid;
     if (!fixValid) {
         state_.kinematicAidingValid = false;
+        state_.gpsTurnRateBankValid = false;
         verticalMotionStable_ = false;
         verticalSmoothSinceMs_ = 0;
         state_.verticalMotionStable = false;
@@ -429,8 +482,11 @@ void AircraftAHRS::updateGps(float trackDeg, float speed, float altitudeM,
     if (moving && haveGpsHistory_ && dt > 0.02f && dt < 2.0f) {
         float derivativeAlpha = correctionFraction(dt, config_.gpsDerivativeTimeSec);
         float turnRate = wrap180(trackDeg - lastTrackDeg_) * DEG_TO_RAD_F / dt;
-        filteredTurnRateRadSec_ += derivativeAlpha * (turnRate - filteredTurnRateRadSec_);
-        state_.gpsBankDeg = atanf(speed * filteredTurnRateRadSec_ / GRAVITY_MPS2) * RAD_TO_DEG_F;
+        filteredGpsTurnRateRadSec_ += derivativeAlpha *
+            (turnRate - filteredGpsTurnRateRadSec_);
+        state_.gpsTurnRateBankDeg = atanf(
+            speed * filteredGpsTurnRateRadSec_ / GRAVITY_MPS2) * RAD_TO_DEG_F;
+        state_.gpsTurnRateBankValid = true;
         float climbRate = selectedClimbRate(nowMs);
         if (haveBaro_ && lastBaroMs_ &&
             (uint32_t)(nowMs - lastBaroMs_) <= config_.baroTimeoutSec * 1000.0f) {
@@ -451,6 +507,8 @@ void AircraftAHRS::updateGps(float trackDeg, float speed, float altitudeM,
     } else if (moving && !state_.headingValid) {
         state_.headingDeg = trackDeg;
         state_.headingValid = true;
+    } else if (!moving) {
+        state_.gpsTurnRateBankValid = false;
     }
 
     lastTrackDeg_ = trackDeg;
@@ -501,14 +559,16 @@ float AircraftAHRS::selectedClimbRate(uint32_t nowMs) const {
 }
 
 const AircraftAHRS::State &AircraftAHRS::state(uint32_t nowMs) {
-    applyHeadingAiding(nowMs);
     state_.gpsAgeMs = lastGpsMs_ ? (uint32_t)(nowMs - lastGpsMs_) : UINT32_MAX;
     if (!lastGpsMs_ || state_.gpsAgeMs > config_.gpsTimeoutSec * 1000) {
         state_.gpsValid = false;
         state_.kinematicAidingValid = false;
+        state_.gpsTurnRateBankValid = false;
+        state_.yawGyroTurnRateBankValid = false;
         verticalMotionStable_ = false;
         verticalSmoothSinceMs_ = 0;
     }
+    applyHeadingAiding(nowMs);
     state_.verticalMotionStable = verticalMotionStable_;
     state_.baroAgeMs = lastBaroMs_ ? (uint32_t)(nowMs - lastBaroMs_) : UINT32_MAX;
     state_.barometerValid = haveBaro_ && state_.baroAgeMs <= config_.baroTimeoutSec * 1000.0f;

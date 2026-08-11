@@ -5,10 +5,10 @@
 #include "DipAHRS.h"
 
 // Deliberately narrow GPS-aided AHRS for coordinated, low-wind airplane flight.
-// Gyros provide short-term attitude; GPS track, turn rate and climb angle provide
-// the long-term yaw, roll and pitch references. Accelerometers contribute a
-// gated roll observation when their magnitude is consistent with gravity;
-// coordinated-turn bank is added as a separate target term.
+// Gyros provide short-term attitude. Independent GPS-track, magnetic-heading,
+// and yaw-gyro turn rates provide coordinated-turn bank observations.
+// Accelerometers add a gated lateral-specific-force residual, and DipAHRS
+// supplies a separate absolute roll observation.
 class AircraftAHRS {
 public:
     struct Config {
@@ -18,6 +18,8 @@ public:
         float pitchCorrectionTimeSec = 8.0f;
         float gpsDerivativeTimeSec = 1.5f;
         float fusedHeadingFilterTimeSec = 0.35f;
+        float magneticDerivativeTimeSec = 1.5f;
+        float yawGyroDerivativeTimeSec = 1.5f;
         float gpsHeadingSpeedThresholdMps = 20.576f; // 40 kt
         float gpsHeadingWeight = 3.0f;
         float gyroBiasXDegSec = 0.0f;
@@ -39,16 +41,26 @@ public:
         float pitchGravityCorrectionTimeSec = 12.0f;
         float accelFilterTimeSec = 0.25f;
         float accelMagnitudeToleranceMps2 = 1.5f;
+        // The three independent turn-rate bank estimates are normalized by
+        // the sum of the weights for the currently valid sources.
+        float gpsTurnRateBankWeight = 1.0f;
+        // Magnetic turn-rate bank is currently disabled pending investigation
+        // of noise and occasional discontinuity glitches.
+        float magTurnRateBankWeight = 0.0f;
+        float yawGyroTurnRateBankWeight = 1.0f;
+        // Lateral specific force is an additive uncoordinated-flight residual.
         float accelerometerRollWeight = 1.0f;
-        float turnBankWeight = 0.0f;
-        float gpsBankWeight = 1.05f;
+        // Final normalized fusion of turn-rate/accelerometer roll and DipAHRS.
+        // DipAHRS roll is retained as a diagnostic input, but is disabled in
+        // the roll correction target by default because the flight data shows
+        // it to be unreliable.
+        float fusedTurnRateBankWeight = 20.0f;
+        float dipAhrsRollWeight = 0.0f;
         float maximumBankTargetDeg = 60.0f;
         // NOAA WMM-2025 field at 47.6062 N, 122.3321 W, 0 km on 2026-08-09.
         // Declination is east-positive; inclination is down-positive in NED.
         float magneticDeclinationDeg = 14.89224f;
         float magneticInclinationDeg = 68.75569f;
-        float magneticRollCorrectionTimeSec = 40.0f;
-        float magneticRollWeight = 0.0f;
         float magneticFieldMagnitudeTolerance = 0.20f;
         float magneticRollMaximumDisagreementDeg = 15.0f;
         float magneticRollMinimumGeometry = 0.25f;
@@ -84,10 +96,11 @@ public:
         float velocityEastMps = 0;
         float gpsTrackDeg = 0;
         float gpsAltitudeM = 0;
-        float gpsBankDeg = 0;
+        float gpsTurnRateBankDeg = 0;
+        float magTurnRateBankDeg = 0;
+        float yawGyroTurnRateBankDeg = 0;
+        float fusedTurnRateBankDeg = 0;
         float fusedHeadingDeg = 0;
-        float fusedTurnRateDegSec = 0;
-        float bankTargetDeg = 0;
         float accelerometerRollDeg = 0;
         float rollCorrectionTargetDeg = 0;
         float magneticRollDeg = 0;
@@ -107,6 +120,9 @@ public:
         bool compassAidingValid = false;
         bool accelerometerAidingValid = false;
         bool magneticRollAidingValid = false;
+        bool gpsTurnRateBankValid = false;
+        bool magTurnRateBankValid = false;
+        bool yawGyroTurnRateBankValid = false;
         bool pitchGravityAidingValid = false;
         bool verticalMotionStable = false;
         bool headingAidingValid = false;
@@ -158,10 +174,12 @@ private:
     bool compassHave_[2] = {false, false};
     float lastTrackDeg_ = 0;
     float lastAltitudeM_ = 0;
-    float filteredTurnRateRadSec_ = 0;
-    float filteredFusedTurnRateRadSec_ = 0;
+    float filteredGpsTurnRateRadSec_ = 0;
+    float filteredMagTurnRateRadSec_ = 0;
+    float filteredYawGyroTurnRateRadSec_ = 0;
     float filteredFusedHeadingDeg_ = 0;
-    float previousFusedHeadingDeg_ = 0;
+    float previousMagHeadingDeg_ = 0;
+    uint32_t lastMagHeadingMs_ = 0;
     bool haveFusedHeading_ = false;
     float verticalAccelerationMps2_ = 0;
     uint32_t verticalSmoothSinceMs_ = 0;
@@ -181,5 +199,6 @@ private:
     static float wrap360(float degrees);
     static float correctionFraction(float dt, float timeConstant);
     float selectedClimbRate(uint32_t nowMs) const;
-    void applyHeadingAiding(uint32_t nowMs);
+    void applyHeadingAiding(uint32_t nowMs, bool magneticHeadingUpdated = false);
+    void updateRollCorrectionTarget(bool accelerometerResidualValid);
 };

@@ -99,8 +99,9 @@ int main(int argc, char **argv) {
             rollCsv = std::fopen(argv[++i], "w");
             if (!rollCsv) { std::perror("--roll-csv"); return 1; }
             std::fprintf(rollCsv,
-                         "time_s,g5_roll,ahrs_roll,gps_bank_deg,bank_target_deg,"
-                         "accel_roll_deg,roll_correction_target_deg,fused_turn_rate_deg_sec,"
+                         "time_s,g5_roll,ahrs_roll,gps_turn_rate_bank_deg,"
+                         "mag_turn_rate_bank_deg,yaw_gyro_turn_rate_bank_deg,"
+                         "fused_turn_rate_bank_deg,accel_roll_deg,roll_correction_target_deg,"
                          "magnetic_roll_deg,magnetic_roll_innovation_deg,"
                          "magnetic_roll_disagreement_deg,magnetic_roll_valid,error\n");
             continue;
@@ -261,13 +262,15 @@ int main(int argc, char **argv) {
                                                                g5Heading + replayConfig.g5HeadingOffsetDeg) : 0.0f};
                     timedErrors.push_back(timed);
                     if (rollCsv) {
-                        std::fprintf(rollCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%.6f\n",
+                        std::fprintf(rollCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%.6f\n",
                                      h.timestampUs * 1.0e-6,
                                      g5Roll, state.rollDeg,
-                                     state.gpsBankDeg, state.bankTargetDeg,
+                                     state.gpsTurnRateBankDeg,
+                                     state.magTurnRateBankDeg,
+                                     state.yawGyroTurnRateBankDeg,
+                                     state.fusedTurnRateBankDeg,
                                      state.accelerometerRollDeg,
                                      state.rollCorrectionTargetDeg,
-                                     state.fusedTurnRateDegSec,
                                      state.magneticRollDeg,
                                      state.magneticRollInnovationDeg,
                                      state.magneticRollSourceDisagreementDeg,
@@ -330,12 +333,15 @@ int main(int argc, char **argv) {
         }
     }
     std::printf("STATE roll=%.3f pitch=%.3f heading=%.3f fused_heading=%.3f "
-                "turn_rate=%.3f bank_target=%.3f accel_roll=%.3f roll_target=%.3f "
+                "gps_bank=%.3f mag_bank=%.3f yaw_gyro_bank=%.3f fused_bank=%.3f "
+                "accel_roll=%.3f roll_target=%.3f "
                 "mag_roll=%.3f mag_innov=%.3f mag_disagree=%.3f mag_valid=%d "
                 "accel_pitch=%.3f pitch_target=%.3f vert_accel=%.3f "
                 "vert_stable=%d pitch_aiding=%d compass=%.3f valid=%d\n",
                 s.rollDeg, s.pitchDeg, s.headingDeg, s.fusedHeadingDeg,
-                s.fusedTurnRateDegSec, s.bankTargetDeg, s.accelerometerRollDeg,
+                s.gpsTurnRateBankDeg, s.magTurnRateBankDeg,
+                s.yawGyroTurnRateBankDeg, s.fusedTurnRateBankDeg,
+                s.accelerometerRollDeg,
                 s.rollCorrectionTargetDeg, s.magneticRollDeg,
                 s.magneticRollInnovationDeg, s.magneticRollSourceDisagreementDeg,
                 s.magneticRollAidingValid ? 1 : 0, s.accelerometerPitchDeg,

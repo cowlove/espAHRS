@@ -258,6 +258,17 @@ The pitch CSV includes the accelerometer pitch, AHRS pitch, and G5 pitch.
 Plot those intermediate signals before optimizing a final RMSE: a low score
 obtained by excessive smoothing is not necessarily a good real-time AHRS.
 
+The three canonical flight logs are kept in `flight-data-primary/`. Before
+committing an AHRS change, regenerate their replay artifacts with:
+
+```sh
+make flight-results
+```
+
+This writes roll and pitch CSV results to `flight-data-primary/results/`.
+Those CSVs are versioned with the AHRS commit so before/after behavior can be
+inspected directly from the commit history.
+
 ## Central parameter ownership
 
 `ReplayConfig.h` is intentionally the single command-line mapping layer. The

@@ -42,6 +42,8 @@ struct ReplayConfig {
             {"roll_correction_sec", &ahrs.rollCorrectionTimeSec},
             {"pitch_correction_sec", &ahrs.pitchCorrectionTimeSec},
             {"gps_derivative_sec", &ahrs.gpsDerivativeTimeSec},
+            {"magnetic_derivative_sec", &ahrs.magneticDerivativeTimeSec},
+            {"yaw_gyro_derivative_sec", &ahrs.yawGyroDerivativeTimeSec},
             {"fused_heading_filter_sec", &ahrs.fusedHeadingFilterTimeSec},
             {"gps_heading_speed_threshold_mps", &ahrs.gpsHeadingSpeedThresholdMps},
             {"gps_heading_weight", &ahrs.gpsHeadingWeight},
@@ -64,14 +66,15 @@ struct ReplayConfig {
             {"pitch_gravity_correction_sec", &ahrs.pitchGravityCorrectionTimeSec},
             {"accel_filter_sec", &ahrs.accelFilterTimeSec},
             {"accel_tolerance_mps2", &ahrs.accelMagnitudeToleranceMps2},
+            {"gps_turn_rate_bank_weight", &ahrs.gpsTurnRateBankWeight},
+            {"mag_turn_rate_bank_weight", &ahrs.magTurnRateBankWeight},
+            {"yaw_gyro_turn_rate_bank_weight", &ahrs.yawGyroTurnRateBankWeight},
             {"accelerometer_roll_weight", &ahrs.accelerometerRollWeight},
-            {"turn_bank_weight", &ahrs.turnBankWeight},
-            {"gps_bank_weight", &ahrs.gpsBankWeight},
+            {"fused_turn_rate_bank_weight", &ahrs.fusedTurnRateBankWeight},
+            {"dip_ahrs_roll_weight", &ahrs.dipAhrsRollWeight},
             {"maximum_bank_target_deg", &ahrs.maximumBankTargetDeg},
             {"magnetic_declination_deg", &ahrs.magneticDeclinationDeg},
             {"magnetic_inclination_deg", &ahrs.magneticInclinationDeg},
-            {"magnetic_roll_correction_sec", &ahrs.magneticRollCorrectionTimeSec},
-            {"magnetic_roll_weight", &ahrs.magneticRollWeight},
             {"magnetic_field_magnitude_tolerance", &ahrs.magneticFieldMagnitudeTolerance},
             {"magnetic_roll_max_disagreement_deg", &ahrs.magneticRollMaximumDisagreementDeg},
             {"magnetic_roll_min_geometry", &ahrs.magneticRollMinimumGeometry},
@@ -105,6 +108,7 @@ struct ReplayConfig {
     static void list() {
         std::puts("tunable parameters: yaw_correction_sec roll_correction_sec "
                    "pitch_correction_sec gps_derivative_sec angle_of_attack_deg "
+                   "magnetic_derivative_sec yaw_gyro_derivative_sec "
                    "fused_heading_filter_sec gps_heading_speed_threshold_mps "
                    "gps_heading_weight "
                    "gyro_bias_x_deg_sec gyro_bias_y_deg_sec gyro_bias_z_deg_sec "
@@ -114,10 +118,12 @@ struct ReplayConfig {
                    "vertical_smoothness_window_sec "
                    "gps_timeout_sec accel_correction_sec pitch_kinematic_correction_sec accel_filter_sec "
                    "pitch_gravity_correction_sec "
-                   "accel_tolerance_mps2 accelerometer_roll_weight turn_bank_weight gps_bank_weight "
+                   "accel_tolerance_mps2 gps_turn_rate_bank_weight "
+                   "mag_turn_rate_bank_weight yaw_gyro_turn_rate_bank_weight "
+                   "accelerometer_roll_weight fused_turn_rate_bank_weight "
+                   "dip_ahrs_roll_weight "
                    "maximum_bank_target_deg magnetic_declination_deg "
-                   "magnetic_inclination_deg magnetic_roll_correction_sec "
-                   "magnetic_roll_weight magnetic_field_magnitude_tolerance "
+                   "magnetic_inclination_deg magnetic_field_magnitude_tolerance "
                    "magnetic_roll_max_disagreement_deg magnetic_roll_min_geometry "
                    "min_ground_speed_mps baro_alt_filter_sec "
                    "baro_rate_filter_sec baro_gps_bias_sec baro_timeout_sec "
