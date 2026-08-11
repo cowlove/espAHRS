@@ -54,6 +54,7 @@ roll correction target as:
 ```text
 roll_target = accelerometer_roll_weight * accelerometer_roll
             + turn_bank_weight * bank_target
+            + gps_bank_weight * gps_bank
 ```
 
 `accelerometer_roll` is the gravity-derived roll after the current roll is
@@ -63,6 +64,12 @@ ground speed:
 
 ```text
 bank_target = atan(speed * fused_turn_rate) / g
+```
+
+`gps_bank` uses the filtered derivative of GPS ground track only:
+
+```text
+gps_bank = atan(speed * gps_turn_rate) / g
 ```
 
 The result is limited by `maximum_bank_target_deg`.
@@ -83,10 +90,10 @@ turn_bank_weight          = 1.0
 ```
 
 uses only the turn-derived bank target. Values of `0.5` and `0.5` produce a
-conventional half-and-half average. The current defaults are `1.0` and `1.0`,
-which intentionally preserve both contributions as additive corrections; a
-sweep should check whether that total gain is too aggressive when both inputs
-are nonzero.
+conventional additive blend. The committed GEEK-S3 tuning uses
+`gps_bank_weight=1.05`, with `turn_bank_weight=0` and
+`magnetic_roll_weight=0` because the flight replay showed discontinuities and
+poor magnetic roll observations.
 
 `accel_correction_sec` controls how quickly the AHRS follows this combined
 target. If accelerometer quality is poor, the implementation falls back to
@@ -153,8 +160,9 @@ trust gyro integration more.
 | `yaw_correction_sec` | s | 2.0 | Heading response to the fused heading reference. |
 | `roll_correction_sec` | s | 4.0 | Fallback roll response when accelerometer aiding is unavailable. |
 | `pitch_correction_sec` | s | 8.0 | Response to the GPS flight-path/angle-of-attack pitch reference. |
-| `accel_correction_sec` | s | 12.0 | Response to the combined accelerometer/turn-bank roll target. |
-| `pitch_gravity_correction_sec` | s | 8.0 | Response to the gravity-derived pitch target when vertical motion is stable. |
+| `accel_correction_sec` | s | 5.0 | Response to the combined accelerometer/GPS-bank roll target. |
+| `pitch_kinematic_correction_sec` | s | 20.0 | Response to kinematic pitch correction when gravity-only pitch aiding is unavailable. |
+| `pitch_gravity_correction_sec` | s | 12.0 | Response to the gravity-derived pitch target when vertical motion is stable. |
 | `gps_derivative_sec` | s | 1.5 | Smoothing of GPS track rate used for turn-rate and bank estimation. |
 
 Do not compensate for a bad axis sign by making a correction time constant
@@ -208,7 +216,7 @@ should remain a weak long-period correction until flight data proves otherwise.
 | `magnetic_declination_deg` | deg | 14.89224 | East-positive local magnetic declination. |
 | `magnetic_inclination_deg` | deg | 68.75569 | Down-positive magnetic dip/inclination. |
 | `magnetic_roll_correction_sec` | s | 40.0 | Time constant for applying the magnetic roll innovation. |
-| `magnetic_roll_weight` | — | 0.25 | Direct gain on the magnetic roll correction, capped at 1. |
+| `magnetic_roll_weight` | — | 0.0 | Direct gain on the magnetic roll correction; disabled in the committed flight tuning. |
 | `magnetic_field_magnitude_tolerance` | fraction | 0.20 | Allowed deviation of calibrated field magnitude from its normalized value of 1. |
 | `magnetic_roll_max_disagreement_deg` | deg | 15.0 | Maximum disagreement between the two compass roll observations before magnetic roll aiding is rejected. |
 | `magnetic_roll_min_geometry` | normalized | 0.25 | Minimum geometric sensitivity required to solve roll from the field vector. |
