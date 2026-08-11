@@ -35,6 +35,7 @@ public:
         float angleOfAttackDeg = 0.0f;
         float gpsTimeoutSec = 1.0f;
         float accelCorrectionTimeSec = 12.0f;
+        float pitchKinematicCorrectionTimeSec = 12.0f;
         float pitchGravityCorrectionTimeSec = 8.0f;
         float accelFilterTimeSec = 0.25f;
         float accelMagnitudeToleranceMps2 = 1.5f;

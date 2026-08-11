@@ -60,6 +60,7 @@ struct ReplayConfig {
             {"angle_of_attack_deg", &ahrs.angleOfAttackDeg},
             {"gps_timeout_sec", &ahrs.gpsTimeoutSec},
             {"accel_correction_sec", &ahrs.accelCorrectionTimeSec},
+            {"pitch_kinematic_correction_sec", &ahrs.pitchKinematicCorrectionTimeSec},
             {"pitch_gravity_correction_sec", &ahrs.pitchGravityCorrectionTimeSec},
             {"accel_filter_sec", &ahrs.accelFilterTimeSec},
             {"accel_tolerance_mps2", &ahrs.accelMagnitudeToleranceMps2},
@@ -111,7 +112,7 @@ struct ReplayConfig {
                    "accel_bias_x_mps2 accel_bias_y_mps2 accel_bias_z_mps2 "
                    "vertical_rate_filter_sec vertical_accel_tolerance_mps2 "
                    "vertical_smoothness_window_sec "
-                   "gps_timeout_sec accel_correction_sec accel_filter_sec "
+                   "gps_timeout_sec accel_correction_sec pitch_kinematic_correction_sec accel_filter_sec "
                    "pitch_gravity_correction_sec "
                    "accel_tolerance_mps2 accelerometer_roll_weight turn_bank_weight gps_bank_weight "
                    "maximum_bank_target_deg magnetic_declination_deg "

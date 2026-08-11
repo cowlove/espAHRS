@@ -352,7 +352,9 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
             } else if (state_.kinematicAidingValid) {
                 float pitchTarget = state_.gpsFlightPathDeg + config_.angleOfAttackDeg;
                 state_.pitchCorrectionTargetDeg = pitchTarget;
-                state_.pitchDeg += rollBlend * wrap180(accelPitch - pitchTarget);
+                float pitchBlend = correctionFraction(
+                    dt, config_.pitchKinematicCorrectionTimeSec);
+                state_.pitchDeg += pitchBlend * wrap180(accelPitch - pitchTarget);
             }
             state_.accelerometerAidingValid = true;
         }
