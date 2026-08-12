@@ -112,3 +112,15 @@ samples, compass samples, GPS PVT records, and barometer samples when those
 sources are available. GPIO0 toggles logging and the Geek board's microSD uses
 the documented HSPI wiring: SCK GPIO36, MISO GPIO37, MOSI GPIO35, and CS
 GPIO34.
+
+### T-Beam display logging workaround
+
+The T-Beam SH1106 display is rendered by a low-priority application-owned
+FreeRTOS task through the board-specific HAL entry point. It uses U8g2 page
+transfers with a delay between pages. When logging starts, the task renders the
+`LOG` indication once and then freezes all display/I2C updates until logging
+stops. This is a deliberate temporary real-time safeguard: the display remains
+static during capture so its shared I2C bus cannot interfere with the sensor
+loop. Display updates resume after the log is closed. The longer-term design
+can refine the page scheduler and bus arbitration; two occasional mid-log
+timing outliers remain under investigation.

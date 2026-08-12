@@ -72,7 +72,7 @@ SensorQMI8658 qmi8658;
 SensorQMC6310 qmc6310;
 XPowersAXP2101 pmu;
 IMUdata qmiAccel, qmiGyro;
-U8G2_SH1106_128X64_NONAME_F_HW_I2C tbeamDisplay(U8G2_R0, U8X8_PIN_NONE);
+U8G2_SH1106_128X64_NONAME_1_HW_I2C tbeamDisplay(U8G2_R0, U8X8_PIN_NONE);
 uint8_t tbeamDisplayAddress = 0;
 Adafruit_BMP280 baro;
 Adafruit_BME280 bme;
@@ -87,6 +87,10 @@ uint8_t gpsSatellites = 0;
 float gpsPdop = 99.0f;
 uint32_t lastG5PacketMs = 0;
 uint32_t discardedG5NmeaPackets = 0;
+SemaphoreHandle_t displayStatusMutex = nullptr;
+TaskHandle_t displayTaskHandle = nullptr;
+HalDisplayStatus latestDisplayStatus{};
+volatile bool displayFrozen = false;
 SharedUbloxGPS sharedGps;
 static AircraftAHRS::Config makeAhrsConfigFromHal() {
   AircraftAHRS::Config config;
@@ -130,6 +134,13 @@ static void stopSessionWithSummary() {
   // available in battery/flight logs when serial output is unavailable.
   sessionLog.append(FUSION_LOG_EVENT, micros(), summary, strlen(summary));
   sessionLog.stop();
+  if (displayStatusMutex) {
+    if (xSemaphoreTake(displayStatusMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+      latestDisplayStatus.logging = false;
+      xSemaphoreGive(displayStatusMutex);
+    }
+  }
+  displayFrozen = false;
 }
 bool lastLogButton = true;
 uint32_t logButtonChangedMs = 0;
@@ -186,26 +197,41 @@ void setupDisplay() {
   display.println("hardware test"); displayOk = true;
 }
 
-void updateDisplay(const HalDisplayStatus &status) {
+// HAL display entry point. The application owns the task and publishes a
+// board-neutral status snapshot; this function owns only board-specific
+// rendering and is called by the low-priority display task. During logging,
+// the task is frozen after the LOG acknowledgement is rendered so the
+// display cannot interfere with acquisition.
+void halUpdateDisplay(const HalDisplayStatus &status) {
   if (!displayOk) return;
   uint32_t nowMs = status.uptimeSeconds * 1000UL;
   if (HARDWARE.display == HalDisplayKind::TBeamSupreme_SH1106) {
   char line[32];
-  tbeamDisplay.clearBuffer(); tbeamDisplay.setFont(u8g2_font_6x10_tf);
-  auto health = [&](int x, int y, const char *label, bool good) {
-    if (good) { tbeamDisplay.drawBox(x, y - 9, 38, 11); tbeamDisplay.setDrawColor(0); }
-    tbeamDisplay.drawStr(x + 2, y, label); tbeamDisplay.setDrawColor(1);
-  };
-  health(0, 10, "GPS", status.gps); health(44, 10, "IMU", status.imu);
-  health(88, 10, "SD", status.sd);
-  health(0, 22, "BARO", status.baro); health(44, 22, "MAG", status.compass);
-  health(88, 22, "LOG", status.logging);
-  snprintf(line, sizeof(line), "R%5.1f P%5.1f", status.rollDeg, status.pitchDeg);
-  tbeamDisplay.drawStr(0, 34, line);
-  snprintf(line, sizeof(line), "H%5.1f V%4.1f", status.headingDeg, status.groundSpeedMps);
-  tbeamDisplay.drawStr(0, 46, line);
-  snprintf(line, sizeof(line), "LOG %lus", (unsigned long)status.freeLogSeconds);
-  tbeamDisplay.drawStr(0, 58, line); tbeamDisplay.sendBuffer();
+  bool more;
+  tbeamDisplay.firstPage();
+  do {
+    tbeamDisplay.setFont(u8g2_font_6x10_tf);
+    auto health = [&](int x, int y, const char *label, bool good) {
+      if (good) { tbeamDisplay.drawBox(x, y - 9, 38, 11); tbeamDisplay.setDrawColor(0); }
+      tbeamDisplay.drawStr(x + 2, y, label); tbeamDisplay.setDrawColor(1);
+      taskYIELD();
+    };
+    health(0, 10, "GPS", status.gps); health(44, 10, "IMU", status.imu);
+    health(88, 10, "SD", status.sd);
+    health(0, 22, "BARO", status.baro); health(44, 22, "MAG", status.compass);
+    health(88, 22, "LOG", status.logging);
+    snprintf(line, sizeof(line), "R%5.1f P%5.1f", status.rollDeg, status.pitchDeg);
+    tbeamDisplay.drawStr(0, 34, line); taskYIELD();
+    snprintf(line, sizeof(line), "H%5.1f V%4.1f", status.headingDeg, status.groundSpeedMps);
+    tbeamDisplay.drawStr(0, 46, line); taskYIELD();
+    snprintf(line, sizeof(line), "LOG %lus", (unsigned long)status.freeLogSeconds);
+    tbeamDisplay.drawStr(0, 58, line);
+    more = tbeamDisplay.nextPage();
+    // Do not dispatch the next page immediately.  Leaving a real bus-idle
+    // window prevents a series of page writes from monopolizing Wire even
+    // though this task has low FreeRTOS priority.
+    if (more) vTaskDelay(pdMS_TO_TICKS(25));
+  } while (more);
   return;
   }
 
@@ -309,10 +335,57 @@ void updateLoggingButton() {
   }
 }
 
+void displayUpdateTask(void *) {
+  HalDisplayStatus status{};
+  for (;;) {
+    if (displayFrozen) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
+    if (displayStatusMutex &&
+        xSemaphoreTake(displayStatusMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+      status = latestDisplayStatus;
+      xSemaphoreGive(displayStatusMutex);
+      halUpdateDisplay(status);
+    }
+    // Priority 0 keeps display transfers below the sensor/AHRS loop.  The
+    // short delay also prevents a failed/unplugged panel from being retried
+    // continuously at the expense of the rest of the system.
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
+void startDisplayUpdateTask() {
+  if (!displayOk || HARDWARE.display == HalDisplayKind::None) return;
+  displayStatusMutex = xSemaphoreCreateMutex();
+  if (!displayStatusMutex) return;
+  xTaskCreatePinnedToCore(displayUpdateTask, "display", 4096, nullptr, 0,
+                          &displayTaskHandle, 1);
+}
+
+void publishDisplayStatus(const HalDisplayStatus &status) {
+  if (!displayStatusMutex) return;
+  if (xSemaphoreTake(displayStatusMutex, pdMS_TO_TICKS(2)) == pdTRUE) {
+    latestDisplayStatus = status;
+    xSemaphoreGive(displayStatusMutex);
+  }
+}
+
 void updateBootLogging() {}
 
 bool startSessionLog() {
-  return sdOk && sessionLog.begin(SD);
+  if (!sdOk || !sessionLog.begin(SD)) return false;
+  // Show a positive button response, then freeze the panel while acquisition
+  // runs.  This avoids any OLED/I2C traffic during real-time logging.
+  if (displayStatusMutex) {
+    if (xSemaphoreTake(displayStatusMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
+      latestDisplayStatus.logging = true;
+      xSemaphoreGive(displayStatusMutex);
+    }
+  }
+  vTaskDelay(pdMS_TO_TICKS(150));
+  displayFrozen = true;
+  return true;
 }
 
 bool readSerialLine(String &line, uint32_t timeoutMs) {
@@ -667,7 +740,7 @@ void setup() {
   }
   setupGPS(); setupG5Logging();
 #else
-  setupDisplay(); setupStorage(); setupBerryIMU(); setupGPS(); setupG5Logging();
+  setupDisplay(); startDisplayUpdateTask(); setupStorage(); setupBerryIMU(); setupGPS(); setupG5Logging();
 #endif
   qmcPOk = setupQmc5883p();
   Serial.printf("LCD=%s SD=%s GPS=%s QMC=%s IMU=%s BARO=%s flash=%uMB PSRAM=%s freeRAM=%uKB freePSRAM=%uKB totalPSRAM=%uKB\n", displayOk ? "OK" : "FAIL",
@@ -805,7 +878,7 @@ void loop() {
       static_cast<uint32_t>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
       sessionLog.freeLogSeconds()
     };
-    updateDisplay(status);
+    publishDisplayStatus(status);
   }
   delay(1);
 }
