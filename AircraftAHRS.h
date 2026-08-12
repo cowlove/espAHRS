@@ -161,6 +161,7 @@ public:
 
     AircraftAHRS();
     explicit AircraftAHRS(const Config &config);
+    void setGyroIntegrationDt(float seconds) { config_.gyroIntegrationDtSec = seconds; }
     void reset();
     void updateImu(float gyroXDegSec, float gyroYDegSec, float gyroZDegSec,
                    uint32_t nowUs, float accelXMps2 = 0.0f,

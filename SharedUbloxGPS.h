@@ -20,7 +20,17 @@ public:
         serial->begin(candidate, SERIAL_8N1, rxPin, txPin);
         while (serial->available()) serial->read();
         delay(100);
-        return gnss.begin(*serial);
+        size_t rawBytes = 0;
+        uint32_t sampleUntil = millis() + 250;
+        while ((int32_t)(millis() - sampleUntil) < 0) {
+            while (serial->available()) { serial->read(); ++rawBytes; }
+            delay(2);
+        }
+        bool ok = gnss.begin(*serial);
+        Serial.printf("GNSS probe baud=%lu raw_bytes=%u ubx=%s\n",
+                      (unsigned long)candidate, (unsigned)rawBytes,
+                      ok ? "OK" : "FAIL");
+        return ok;
     }
 
     bool begin(HardwareSerial &port, int receiverRx, int receiverTx,
@@ -61,4 +71,3 @@ public:
     }
 };
 #endif
-

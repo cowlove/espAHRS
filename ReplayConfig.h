@@ -18,6 +18,8 @@ struct ReplayConfig {
     float sensorRollOffsetDeg = 6.0f;
     float sensorYawOffsetDeg = 0.0f;
     float accelInputScale = 1.0f;
+    uint8_t selectedImuSource = 0;
+    uint8_t selectedCompassSource = 0;
 
     ReplayConfig() {
         constexpr HalHardwareProfile hardware = makeGeekS3Profile();
@@ -112,6 +114,12 @@ struct ReplayConfig {
         if (std::strcmp(name, "accel_input_scale") == 0) {
             accelInputScale = value; return true;
         }
+        if (std::strcmp(name, "imu_source") == 0 && value >= 0.0f && value < 4.0f) {
+            selectedImuSource = static_cast<uint8_t>(value); return true;
+        }
+        if (std::strcmp(name, "compass_source") == 0 && value >= 0.0f && value < 4.0f) {
+            selectedCompassSource = static_cast<uint8_t>(value); return true;
+        }
         return false;
     }
 
@@ -141,6 +149,7 @@ struct ReplayConfig {
                    "min_ground_speed_mps baro_alt_filter_sec "
                    "baro_rate_filter_sec baro_gps_bias_sec baro_timeout_sec "
                    "g5_heading_offset_deg g5_time_offset_ms "
-                   "sensor_pitch_offset_deg sensor_roll_offset_deg sensor_yaw_offset_deg accel_input_scale");
+                   "sensor_pitch_offset_deg sensor_roll_offset_deg sensor_yaw_offset_deg accel_input_scale "
+                   "imu_source compass_source");
     }
 };

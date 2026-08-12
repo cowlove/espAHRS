@@ -30,14 +30,14 @@ class FusionSessionLog {
         // failed.  Require actual free SPIRAM before selecting the PSRAM
         // capacity.  Use all but a small reserve, rather than requiring the
         // full T-Beam-sized maximum on boards with smaller PSRAM.
-        const size_t reserve = 64 * 1024;
+        const size_t reserve = 512 * 1024;
         if (freePsram > reserve) {
             capacityBytes_ = freePsram - reserve;
             buffer_ = static_cast<uint8_t *>(heap_caps_malloc(
                 capacityBytes_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
             if (buffer_) psram_ = true;
         }
-        else {
+        if (!buffer_) {
             capacityBytes_ = InternalRecords * (sizeof(FusionLogRecordHeader) + MaxPayload);
             buffer_ = static_cast<uint8_t *>(malloc(capacityBytes_));
             if (buffer_) psram_ = false;
@@ -137,9 +137,10 @@ public:
         bufferedBytes_ += recordBytes; ++buffered_;
         portEXIT_CRITICAL(&producerMux_); return true;
     }
-    bool appendImu(uint64_t t,float gx,float gy,float gz,float ax,float ay,float az,bool valid=true) { FusionImuRecord r{t,gx,gy,gz,ax,ay,az,(uint8_t)(valid?1:0)}; return append(FUSION_LOG_IMU,t,&r,sizeof(r)); }
+    bool appendImu(uint8_t source, uint64_t t,float gx,float gy,float gz,float ax,float ay,float az,bool valid=true) { FusionImuRecord r{t,gx,gy,gz,ax,ay,az,(uint8_t)(valid?1:0)}; return append(fusionImuLogType(source),t,&r,sizeof(r)); }
+    bool appendImu(uint64_t t,float gx,float gy,float gz,float ax,float ay,float az,bool valid=true) { return appendImu(0, t, gx, gy, gz, ax, ay, az, valid); }
     bool appendGps(uint32_t t,int32_t lat,int32_t lon,int32_t alt,uint32_t speed,int32_t heading,bool valid) { FusionGpsRecord r{t,lat,lon,alt,speed,heading,(uint8_t)(valid?1:0)}; return append(FUSION_LOG_GPS,(uint64_t)t*1000ULL,&r,sizeof(r)); }
     bool appendBaro(uint64_t t,float pressure,float altitude,bool valid=true) { FusionBaroRecord r{t,pressure,altitude,(uint8_t)(valid?1:0)}; return append(FUSION_LOG_BARO,t,&r,sizeof(r)); }
-    bool appendCompass(uint8_t source,uint64_t t,float x,float y,float z,bool valid=true) { if(source>1)return false; FusionCompassRecord r{t,x,y,z,(uint8_t)(valid?1:0)}; return append(source?FUSION_LOG_COMPASS1:FUSION_LOG_COMPASS0,t,&r,sizeof(r)); }
+    bool appendCompass(uint8_t source,uint64_t t,float x,float y,float z,bool valid=true) { if(source>3)return false; FusionCompassRecord r{t,x,y,z,(uint8_t)(valid?1:0)}; return append(fusionCompassLogType(source),t,&r,sizeof(r)); }
     void flush() {}
 };

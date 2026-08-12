@@ -120,7 +120,7 @@ int main(int argc, char **argv) {
         if (std::strcmp(argv[i], "--imu-csv") == 0 && i + 1 < argc) {
             imuCsv = std::fopen(argv[++i], "w");
             if (!imuCsv) { std::perror("--imu-csv"); return 1; }
-            std::fprintf(imuCsv, "time_s,dt_s,body_pitch_rate_deg_sec,yaw_rate_deg_sec,pitch_q_contribution_deg_sec,pitch_yaw_coupling_deg_sec,gyro_pitch_delta_deg,accel_pitch_correction_delta_deg,gps_pitch_correction_delta_deg,ahrs_roll,ahrs_pitch,gyro_sample_accepted\n");
+                std::fprintf(imuCsv, "time_s,dt_s,raw_gyro_x_deg_sec,raw_gyro_y_deg_sec,raw_gyro_z_deg_sec,body_pitch_rate_deg_sec,yaw_rate_deg_sec,pitch_q_contribution_deg_sec,pitch_yaw_coupling_deg_sec,gyro_pitch_delta_deg,accel_pitch_correction_delta_deg,gps_pitch_correction_delta_deg,ahrs_roll,ahrs_pitch,gyro_sample_accepted\n");
             continue;
         }
         if (std::strcmp(argv[i], "--param") == 0 && i + 1 < argc) ++i;
@@ -201,11 +201,16 @@ int main(int argc, char **argv) {
             if (firstSequenceAnomaly == UINT32_MAX) firstSequenceAnomaly = h.sequence;
         }
         expectedSequence = h.sequence + 1;
-        if (h.type < 9) ++counts[h.type];
+        if (h.type < 14) ++counts[h.type];
         const uint32_t nowMs = msFromUs(h.timestampUs);
         if (nowMs > lastMs) lastMs = nowMs;
         switch (h.type) {
-        case FUSION_LOG_IMU: {
+        case FUSION_LOG_IMU0:
+        case FUSION_LOG_IMU1:
+        case FUSION_LOG_IMU2:
+        case FUSION_LOG_IMU3: {
+            if (fusionLogIsImu(static_cast<FusionLogType>(h.type))) {
+            if (fusionLogSource(static_cast<FusionLogType>(h.type)) != replayConfig.selectedImuSource) break;
             if (h.payloadLength != sizeof(FusionImuRecord)) return 1;
             FusionImuRecord r; std::memcpy(&r, payload, sizeof(r));
             // Early GEEK captures contain ICM-20948 milli-g values that were
@@ -226,8 +231,9 @@ int main(int argc, char **argv) {
                             r.accelX, r.accelY, r.accelZ, r.valid != 0);
             if (imuCsv) {
                 const auto &s = ahrs.state(nowMs);
-                std::fprintf(imuCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d\n",
+                std::fprintf(imuCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d\n",
                              h.timestampUs * 1.0e-6, s.lastImuDtSec,
+                             r.gyroX, r.gyroY, r.gyroZ,
                              s.lastPitchBodyRateDegSec, s.lastYawBodyRateDegSec,
                              s.lastPitchQContributionDegSec,
                              s.lastPitchYawCouplingDegSec,
@@ -238,12 +244,17 @@ int main(int argc, char **argv) {
                              s.lastGyroSampleAccepted ? 1 : 0);
             }
             break;
+            }
+            break;
         }
         case FUSION_LOG_COMPASS0:
-        case FUSION_LOG_COMPASS1: {
+        case FUSION_LOG_COMPASS1:
+        case FUSION_LOG_COMPASS2:
+        case FUSION_LOG_COMPASS3: {
+            if (fusionLogSource(static_cast<FusionLogType>(h.type)) != replayConfig.selectedCompassSource) break;
             if (h.payloadLength != sizeof(FusionCompassRecord)) return 1;
             FusionCompassRecord r; std::memcpy(&r, payload, sizeof(r));
-            ahrs.updateCompass(h.type == FUSION_LOG_COMPASS1 ? 1 : 0,
+            ahrs.updateCompass(0,
                                r.x, r.y, r.z, r.valid != 0, nowMs);
             break;
         }
