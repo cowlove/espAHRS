@@ -61,6 +61,12 @@ struct HalSensorCalibration {
   float accelBiasMps2[3];
   bool applyAccelBias;
 
+  // Exact installed-sensor-axis -> aircraft-axis remap.  This handles the
+  // large, discrete mounting orientation; fine Euler alignment is composed
+  // after it at runtime.  Zero-initialized legacy profiles are normalized to
+  // identity by setup().
+  float sensorAxisRemap[3][3];
+
   // Index 0/1 matches AHRS compass source 0/1, not a sensor identity.
   HalCompassCalibration compass[2];
 };
@@ -101,6 +107,17 @@ inline void halMultiplyMatrix(const float left[3][3], const float right[3][3],
   }
 }
 
+inline void halSetIdentityIfUnset(float matrix[3][3]) {
+  bool unset = true;
+  for (int row = 0; row < 3; ++row)
+    for (int column = 0; column < 3; ++column)
+      if (matrix[row][column] != 0.0f) unset = false;
+  if (unset)
+    for (int row = 0; row < 3; ++row)
+      for (int column = 0; column < 3; ++column)
+        matrix[row][column] = row == column ? 1.0f : 0.0f;
+}
+
 struct HalHardwareProfile {
   HalBoardKind kind;
   const char *name;
@@ -136,6 +153,11 @@ constexpr HalHardwareProfile makeGeekS3Profile() {
       {1.0f, -1.0f, -1.0f},
       {-0.002f, -0.019f, 0.222f},
       false,
+      {
+        {1.0f, 0.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f}
+      },
       {
         // Per-compass axis alignment fitted from the motion-alignment session
         // after ellipsoid correction.  The common mounting pitch/roll is
@@ -203,6 +225,17 @@ constexpr HalHardwareProfile makeTBeamSupremeProfile() {
   p.calibration.gyroAxisSign[1] = 1.0f;
   p.calibration.gyroAxisSign[2] = 1.0f;
   p.calibration.applyAccelBias = false;
+  // In the aircraft installation, the QMI sweep identified the installed
+  // sensor axes as: aircraft nose=+QMI X, right=+QMI Z, down=+QMI Y.
+  p.calibration.sensorAxisRemap[0][0] = 1.0f;
+  p.calibration.sensorAxisRemap[0][1] = 0.0f;
+  p.calibration.sensorAxisRemap[0][2] = 0.0f;
+  p.calibration.sensorAxisRemap[1][0] = 0.0f;
+  p.calibration.sensorAxisRemap[1][1] = 0.0f;
+  p.calibration.sensorAxisRemap[1][2] = 1.0f;
+  p.calibration.sensorAxisRemap[2][0] = 0.0f;
+  p.calibration.sensorAxisRemap[2][1] = 1.0f;
+  p.calibration.sensorAxisRemap[2][2] = 0.0f;
   for (int compass = 0; compass < 2; ++compass) {
     for (int axis = 0; axis < 3; ++axis) {
       p.calibration.compass[compass].offset[axis] = 0.0f;
@@ -227,6 +260,18 @@ constexpr HalHardwareProfile makeTBeamSupremeProfile() {
   for (int row = 0; row < 3; ++row)
     for (int column = 0; column < 3; ++column)
       p.calibration.compass[1].matrix[row][column] = tbeamMag[row][column];
+  // Seattle heading/dip plus the controlled yaw/pitch/roll sweep identify the
+  // QMC axes as aircraft nose=+QMC Y, right=+QMC Z, down=+QMC X.  This is
+  // relative to the QMI remap above because setup composes
+  // sensorFrameRotation * compass.frameRotation.
+  const float tbeamCompassFrame[3][3] = {
+    {0.0f, 1.0f, 0.0f},
+    {1.0f, 0.0f, 0.0f},
+    {0.0f, 0.0f, 1.0f}
+  };
+  for (int row = 0; row < 3; ++row)
+    for (int column = 0; column < 3; ++column)
+      p.calibration.compass[1].frameRotation[row][column] = tbeamCompassFrame[row][column];
   return p;
 }
 
