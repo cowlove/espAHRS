@@ -14,7 +14,7 @@ public:
     struct Config {
         float minimumGroundSpeedMps = 5.0f;
         float yawCorrectionTimeSec = 2.0f;
-        float rollCorrectionTimeSec = 4.0f;
+        float rollCorrectionTimeSec = 2.0f;
         float pitchCorrectionTimeSec = 8.0f;
         float gpsDerivativeTimeSec = 1.5f;
         float gpsLongitudinalAccelerationFilterTimeSec = 0.0f;
@@ -46,7 +46,7 @@ public:
         float verticalRateFilterTimeSec = 1.5f;
         float angleOfAttackDeg = 0.0f;
         float gpsTimeoutSec = 1.0f;
-        float accelCorrectionTimeSec = 5.0f;
+        float accelCorrectionTimeSec = 2.5f;
         float pitchGravityCorrectionTimeSec = 12.0f;
         float accelFilterTimeSec = 0.25f;
         float accelMagnitudeToleranceMps2 = 1.5f;
