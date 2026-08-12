@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <esp_heap_caps.h>
 #include <WiFi.h>
 #include <ArduinoOTA.h>
 #include <math.h>
@@ -6,13 +7,18 @@
 #include <WiFiUdp.h>
 #include <SPI.h>
 #include <SD.h>
+#include <U8g2lib.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
 #include <jimlib.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_LSM9DS1.h>
 #include <Adafruit_BMP280.h>
+#include <Adafruit_BME280.h>
 #include <ICM_20948.h>
+#include <SensorQMI8658.hpp>
+#include <SensorQMC6310.hpp>
+#include <XPowersLib.h>
 #include <espNowMux.h>
 #include <reliableStream.h>
 #include "AircraftAHRS.h"
@@ -20,13 +26,39 @@
 #include "SharedUbloxGPS.h"
 #include "HardwareAbstraction.h"
 
-#if defined(HAL_HEADLESS)
-constexpr HalHardwareProfile HARDWARE = makeHeadlessProfile();
-#else
-constexpr HalHardwareProfile HARDWARE = makeGeekS3Profile();
-#endif
-constexpr uint32_t IMU_OUTPUT_PERIOD_US = 20000; // 50 Hz application stream
-constexpr uint32_t COMPASS1_OUTPUT_PERIOD_US = 20000; // 50 Hz application stream
+HalHardwareProfile HARDWARE = makeGeekS3Profile();
+constexpr HalImuRequest REQUESTED_IMU = {50.0f, 20.0f};
+HalImuConfiguration actualImu = {0, 0, 0.02f, 0, false};
+struct IcmRateProfile {
+  uint16_t gyroDivider;
+  uint16_t accelDivider;
+  float gyroOdrHz;
+  float accelOdrHz;
+  float ahrsIntegrationDtSec;
+  ICM_20948_GYRO_CONFIG_1_DLPCFG_e gyroDlpf;
+  ICM_20948_ACCEL_CONFIG_DLPCFG_e accelDlpf;
+};
+
+constexpr IcmRateProfile makeIcmRateProfile(uint16_t gyroDivider,
+                                            uint16_t accelDivider,
+                                            ICM_20948_GYRO_CONFIG_1_DLPCFG_e gyroDlpf,
+                                            ICM_20948_ACCEL_CONFIG_DLPCFG_e accelDlpf) {
+  return {gyroDivider, accelDivider,
+          1100.0f / (1.0f + gyroDivider),
+          1125.0f / (1.0f + accelDivider),
+          (1.0f + gyroDivider) / 1100.0f,
+          gyroDlpf, accelDlpf};
+}
+
+// Change this one profile when testing another ICM-20948 hardware rate.  The
+// AHRS integration interval follows the gyro ODR so a slower sensor stream is
+// not accidentally integrated with the old 50 Hz weight. The DLPF settings
+// travel with the rate profile so the filter remains appropriate for its
+// output Nyquist frequency.
+constexpr IcmRateProfile ICM_RATE_PROFILE = makeIcmRateProfile(
+    21, 21, gyr_d23bw9_n35bw9, acc_d23bw9_n34bw4);
+constexpr uint32_t COMPASS1_OUTPUT_PERIOD_US =
+    static_cast<uint32_t>(1.0e6f / 50.0f);
 
 // This is the LCD configuration from the last known-good pre-status-page
 // firmware.  Keep it unchanged until the panel is stable again.
@@ -36,8 +68,16 @@ ReliableStreamESPNow espnow("GEEK", true /* alwaysBroadcast */);
 HardwareSerial gpsSerial(1);
 Adafruit_LSM9DS1 imu;
 ICM_20948_I2C icm20948;
+SensorQMI8658 qmi8658;
+SensorQMC6310 qmc6310;
+XPowersAXP2101 pmu;
+IMUdata qmiAccel, qmiGyro;
+U8G2_SH1106_128X64_NONAME_F_HW_I2C tbeamDisplay(U8G2_R0, U8X8_PIN_NONE);
+uint8_t tbeamDisplayAddress = 0;
 Adafruit_BMP280 baro;
-enum class ImuKind { None, LSM9DS1, ICM20948 };
+Adafruit_BME280 bme;
+bool bmeOk = false;
+enum class ImuKind { None, LSM9DS1, ICM20948, QMI8658 };
 ImuKind imuKind = ImuKind::None;
 bool displayOk = false, sdOk = false, imuOk = false, baroOk = false, qmcOk = false;
 bool qmcPOk = false;
@@ -62,6 +102,7 @@ static AircraftAHRS::Config makeAhrsConfigFromHal() {
     config.accelBiasYMps2 = calibration.accelBiasMps2[1];
     config.accelBiasZMps2 = calibration.accelBiasMps2[2];
   }
+  config.gyroIntegrationDtSec = ICM_RATE_PROFILE.ahrsIntegrationDtSec;
   return config;
 }
 AircraftAHRS ahrs(makeAhrsConfigFromHal());
@@ -94,9 +135,50 @@ bool lastLogButton = true;
 uint32_t logButtonChangedMs = 0;
 bool bootLogSession = false;
 uint32_t bootLogDeadlineMs = 0;
+bool startSessionLog();
+
+HalBoardKind detectBoard() {
+  // The AXP2101 at 0x34 on the dedicated GPIO42/41 bus is a strong,
+  // non-destructive T-Beam Supreme signature. GEEK has no device there.
+  Wire1.begin(42, 41);
+  Wire1.setTimeOut(20);
+  Wire1.beginTransmission(AXP2101_SLAVE_ADDRESS);
+  if (Wire1.endTransmission() == 0) return HalBoardKind::TBeamSupreme;
+  return HalBoardKind::GeekS3;
+}
 
 void setupDisplay() {
   if (HARDWARE.display == HalDisplayKind::None) return;
+  if (HARDWARE.display == HalDisplayKind::TBeamSupreme_SH1106) {
+  Wire.begin(HARDWARE.i2cSda, HARDWARE.i2cScl);
+  Wire.setTimeOut(20);
+  // Both addresses ACK on this board. Test 0x3D first: it is the alternate
+  // SH1106 address and selecting 0x3C produced no visible pixels.
+  for (uint8_t address : {uint8_t(0x3D), uint8_t(0x3C)}) {
+    Wire.beginTransmission(address);
+    if (Wire.endTransmission() == 0) { tbeamDisplayAddress = address; break; }
+  }
+  Serial.printf("SH1106 I2C SDA=17 SCL=18 address=%s0x%02X\n",
+                tbeamDisplayAddress ? "" : "not-found ", tbeamDisplayAddress);
+  if (!tbeamDisplayAddress) { displayOk = false; return; }
+  // U8g2 takes the 8-bit form of the I2C address.
+  tbeamDisplay.setI2CAddress(tbeamDisplayAddress << 1);
+  tbeamDisplay.setBusClock(100000);
+  displayOk = tbeamDisplay.begin() == 1;
+  if (displayOk) {
+    tbeamDisplay.setFont(u8g2_font_6x10_tf);
+    tbeamDisplay.clearBuffer();
+    tbeamDisplay.drawBox(0, 0, 128, 12);
+    tbeamDisplay.setDrawColor(0); tbeamDisplay.drawStr(2, 10, "T-BEAM OLED OK");
+    tbeamDisplay.setDrawColor(1); tbeamDisplay.drawStr(0, 28, "SH1106 128x64");
+    tbeamDisplay.drawStr(0, 40, "boot diagnostic");
+    tbeamDisplay.drawStr(0, 52, "I2C 17/18");
+    tbeamDisplay.sendBuffer();
+  } else {
+    Serial.println("SH1106 U8g2 begin failed");
+  }
+  return;
+  }
   pinMode(HARDWARE.lcdBacklight, OUTPUT); digitalWrite(HARDWARE.lcdBacklight, HIGH);
   display.init(135, 240); display.setRotation(1); display.fillScreen(ST77XX_BLACK);
   display.setTextColor(ST77XX_WHITE, ST77XX_BLACK); display.setTextSize(2);
@@ -104,8 +186,28 @@ void setupDisplay() {
   display.println("hardware test"); displayOk = true;
 }
 
-void updateDisplay(uint32_t nowMs, float pressure) {
+void updateDisplay(const HalDisplayStatus &status) {
   if (!displayOk) return;
+  uint32_t nowMs = status.uptimeSeconds * 1000UL;
+  if (HARDWARE.display == HalDisplayKind::TBeamSupreme_SH1106) {
+  char line[32];
+  tbeamDisplay.clearBuffer(); tbeamDisplay.setFont(u8g2_font_6x10_tf);
+  auto health = [&](int x, int y, const char *label, bool good) {
+    if (good) { tbeamDisplay.drawBox(x, y - 9, 38, 11); tbeamDisplay.setDrawColor(0); }
+    tbeamDisplay.drawStr(x + 2, y, label); tbeamDisplay.setDrawColor(1);
+  };
+  health(0, 10, "GPS", status.gps); health(44, 10, "IMU", status.imu);
+  health(88, 10, "SD", status.sd);
+  health(0, 22, "BARO", status.baro); health(44, 22, "MAG", status.compass);
+  health(88, 22, "LOG", status.logging);
+  snprintf(line, sizeof(line), "R%5.1f P%5.1f", status.rollDeg, status.pitchDeg);
+  tbeamDisplay.drawStr(0, 34, line);
+  snprintf(line, sizeof(line), "H%5.1f V%4.1f", status.headingDeg, status.groundSpeedMps);
+  tbeamDisplay.drawStr(0, 46, line);
+  snprintf(line, sizeof(line), "LOG %lus", (unsigned long)status.freeLogSeconds);
+  tbeamDisplay.drawStr(0, 58, line); tbeamDisplay.sendBuffer();
+  return;
+  }
 
   // The panel is 240x135 in rotation 1.  Redraw fixed-height rows instead of
   // clearing the whole panel; this avoids the visible 1 Hz flash and also
@@ -119,34 +221,33 @@ void updateDisplay(uint32_t nowMs, float pressure) {
   };
 
   beginRow(0, 3);
-  display.setTextColor(gpsOk ? ST77XX_GREEN : ST77XX_RED, ST77XX_BLACK);
-  display.printf("G%u S%u", gpsFixQuality, gpsSatellites);
+  display.setTextColor(status.gps ? ST77XX_GREEN : ST77XX_RED, ST77XX_BLACK);
+  display.printf("G%u S%u", status.gpsFixQuality, status.gpsSatellites);
 
   beginRow(1, 2);
-  display.setTextColor(gpsPdop < 2.0f ? ST77XX_GREEN : gpsPdop < 4.0f ? ST77XX_YELLOW : ST77XX_RED, ST77XX_BLACK);
-  display.printf("PD%.1f ", gpsPdop);
-  display.setTextColor(qmcPOk ? ST77XX_GREEN : ST77XX_RED); display.print("QP ");
-  display.setTextColor(imuOk ? ST77XX_GREEN : ST77XX_RED); display.print("IM ");
-  display.setTextColor(sdOk ? ST77XX_GREEN : ST77XX_RED); display.print("SD ");
-  bool g5Active = lastG5PacketMs != 0 && (nowMs - lastG5PacketMs) < 2000;
-  display.setTextColor(g5Active ? ST77XX_GREEN : ST77XX_RED); display.print("G5");
+  display.setTextColor(status.gpsPdop < 2.0f ? ST77XX_GREEN : status.gpsPdop < 4.0f ? ST77XX_YELLOW : ST77XX_RED, ST77XX_BLACK);
+  display.printf("PD%.1f ", status.gpsPdop);
+  display.setTextColor(status.compass ? ST77XX_GREEN : ST77XX_RED); display.print("CP ");
+  display.setTextColor(status.imu ? ST77XX_GREEN : ST77XX_RED); display.print("IM ");
+  display.setTextColor(status.sd ? ST77XX_GREEN : ST77XX_RED); display.print("SD ");
+  display.setTextColor(status.g5 ? ST77XX_GREEN : ST77XX_RED); display.print("G5");
 
   beginRow(2, 3);
-  display.setTextColor(sessionLog.active() ? ST77XX_YELLOW : ST77XX_WHITE, ST77XX_BLACK);
-  display.print(sessionLog.active() ? "LOG" : "---");
-  display.setTextColor(ST77XX_WHITE, ST77XX_BLACK); display.printf(" D%lu", (unsigned long)sessionLog.dropped());
+  display.setTextColor(status.logging ? ST77XX_YELLOW : ST77XX_WHITE, ST77XX_BLACK);
+  display.print(status.logging ? "LOG" : "---");
+  display.setTextColor(ST77XX_WHITE, ST77XX_BLACK); display.printf(" D%lu", (unsigned long)status.droppedLogRecords);
 
   beginRow(3, 3);
   display.setTextColor(ST77XX_WHITE, ST77XX_BLACK);
-  display.printf("%lus", (unsigned long)(nowMs / 1000));
+  display.printf("%lus", (unsigned long)status.uptimeSeconds);
 
   beginRow(4, 3);
-  display.printf("P%.0f", pressure);
+  display.printf("LOG %lus", (unsigned long)status.freeLogSeconds);
 }
 
 void setupStorage() {
   if (!HARDWARE.hasSd) return;
-  sdSpi.begin(HARDWARE.sdSck, HARDWARE.sdMiso, HARDWARE.sdMosi, HARDWARE.sdCs);
+  sdSpi.begin(HARDWARE.sdSck, HARDWARE.sdMiso, HARDWARE.sdMosi);
   sdOk = SD.begin(HARDWARE.sdCs, sdSpi, 20000000);
   if (sdOk) sessionLog.recoverLatest(SD);
   Serial.printf("microSD SPI SCK=%d MISO=%d MOSI=%d CS=%d: %s\n",
@@ -198,7 +299,7 @@ void updateLoggingButton() {
                       (unsigned long)sessionLog.dropped(),
                       (unsigned long)sessionLog.writeErrors(),
                       (unsigned long)discardedG5NmeaPackets);
-      } else if (sdOk && (discardedG5NmeaPackets = 0, sessionLog.begin(SD))) {
+      } else if ((discardedG5NmeaPackets = 0, startSessionLog())) {
         bootLogSession = false;
         Serial.println("SESSION_LOG STARTED");
       } else {
@@ -209,6 +310,10 @@ void updateLoggingButton() {
 }
 
 void updateBootLogging() {}
+
+bool startSessionLog() {
+  return sdOk && sessionLog.begin(SD);
+}
 
 bool readSerialLine(String &line, uint32_t timeoutMs) {
   line = ""; uint32_t deadline = millis() + timeoutMs;
@@ -290,7 +395,7 @@ void handleSerialCommands() {
       command.trim();
       if (command.equalsIgnoreCase("START_LOG")) {
         if (sessionLog.active()) Serial.println("LOG_ERROR ACTIVE");
-        else if (sdOk && (discardedG5NmeaPackets = 0, sessionLog.begin(SD))) Serial.println("SESSION_LOG STARTED");
+        else if ((discardedG5NmeaPackets = 0, startSessionLog())) Serial.println("SESSION_LOG STARTED");
         else Serial.println("SESSION_LOG START FAILED");
       } else if (command.equalsIgnoreCase("STOP_LOG")) {
         if (!sessionLog.active()) Serial.println("LOG_ERROR INACTIVE");
@@ -326,6 +431,83 @@ void setupBerryIMU() {
   // the ESP32-S3 defaults can overlap the LCD's DC/RESET pins (8/9).
   Wire.begin(HARDWARE.i2cSda, HARDWARE.i2cScl);
   Wire.setTimeOut(20); // Missing Qwiic hardware must never stall the test.
+  if (HARDWARE.kind == HalBoardKind::TBeamSupreme) {
+  Serial.println("T-Beam I2C scan SDA=17 SCL=18");
+  // Include 0x7C: the LilyGO QMC63xx example defines QMC6309 there.
+  for (uint8_t address = 0x08; address < 0x80; ++address) {
+    Wire.beginTransmission(address);
+    if (Wire.endTransmission() == 0) Serial.printf("I2C device address=0x%02X\n", address);
+  }
+  Serial.println("I2C probe candidates: BME280=0x76,0x77; QMC6310U=0x1C QMC6310N=0x3C QMC6309=0x7C");
+  bool qmcN = qmc6310.begin(Wire, QMC6310N_SLAVE_ADDRESS,
+                            HARDWARE.i2cSda, HARDWARE.i2cScl);
+  qmcOk = qmcN;
+  Serial.printf("QMC6310N probe address=0x3C: %s\n", qmcN ? "FOUND" : "not detected");
+  if (qmcN) {
+    qmc6310.configMagnetometer(OperationMode::CONTINUOUS_MEASUREMENT,
+                               MagFullScaleRange::FS_8G, 50.0f,
+                               MagOverSampleRatio::OSR_4,
+                               MagDownSampleRatio::DSR_1);
+  }
+  bool pmuOk = pmu.begin(Wire1, AXP2101_SLAVE_ADDRESS, 42, 41);
+  Wire1.setTimeOut(20);
+  Serial.println("T-Beam PMU I2C scan SDA=42 SCL=41");
+  for (uint8_t address = 0x08; address < 0x80; ++address) {
+    Wire1.beginTransmission(address);
+    if (Wire1.endTransmission() == 0)
+      Serial.printf("PMU-bus I2C device address=0x%02X%s\n", address,
+                    address == AXP2101_SLAVE_ADDRESS ? " (AXP2101)" : "");
+  }
+  if (pmuOk) {
+    pmu.setALDO1Voltage(3300); pmu.enableALDO1();
+    pmu.setALDO2Voltage(3300); pmu.enableALDO2();
+    // T-Beam Supreme power table: GNSS is ALDO4 and TF/SD is BLDO1.
+    pmu.setALDO4Voltage(3300); pmu.enableALDO4();
+    pmu.setBLDO1Voltage(3300); pmu.enableBLDO1();
+    Serial.printf("T-Beam power rails: ALDO1=%s %umV ALDO2=%s %umV ALDO4/GNSS=%s %umV BLDO1/SD=%s %umV\n",
+                  pmu.isEnableALDO1() ? "ON" : "OFF", pmu.getALDO1Voltage(),
+                  pmu.isEnableALDO2() ? "ON" : "OFF", pmu.getALDO2Voltage(),
+                  pmu.isEnableALDO4() ? "ON" : "OFF", pmu.getALDO4Voltage(),
+                  pmu.isEnableBLDO1() ? "ON" : "OFF", pmu.getBLDO1Voltage());
+  }
+  // Give the GNSS rail and receiver time to complete cold startup before
+  // probing UART. PPS is optional timing output and is not needed for UBX.
+  delay(500);
+#if defined(TBEAM_NO_QMI)
+  imuOk = false;
+  Serial.println("T-Beam QMI8658: DISABLED FOR SD TEST");
+#else
+  // The T-Beam routes QMI8658 and microSD over the same physical SPI wires.
+  // Use the already-initialized SD controller rather than mapping a second
+  // ESP32 SPI peripheral onto those pins.  The devices have separate CS
+  // lines (QMI=34, SD=47); SensorLib performs the QMI transactions while
+  // the logger owns SD transactions.
+  imuOk = qmi8658.begin(sdSpi, 34, 35, 37, 36);
+  if (imuOk) {
+    // QMI8658 has no exact 50 Hz pair. Choose the closest supported ODRs;
+    // LPF_MODE_3 is the hardware low-pass setting selected by this HAL.
+    qmi8658.configAccelerometer(SensorQMI8658::ACC_RANGE_4G,
+                                SensorQMI8658::ACC_ODR_62_5Hz,
+                                SensorQMI8658::LPF_MODE_3);
+    qmi8658.configGyroscope(SensorQMI8658::GYR_RANGE_128DPS,
+                            SensorQMI8658::GYR_ODR_56_05Hz,
+                            SensorQMI8658::LPF_MODE_3);
+    qmi8658.enableAccelerometer(); qmi8658.enableGyroscope();
+    actualImu = {62.5f, 56.05f, 1.0f / 56.05f, REQUESTED_IMU.lowPassCutoffHz, true};
+    ahrs.setGyroIntegrationDt(actualImu.integrationDtSec);
+  }
+#endif
+  bmeOk = bme.begin(0x77, &Wire);
+  baroOk = bmeOk;
+  imuKind = imuOk ? ImuKind::QMI8658 : ImuKind::None;
+  Serial.printf("T-Beam PMU=%s QMI8658=%s BME280=%s\n", pmuOk ? "OK" : "ABSENT",
+                imuOk ? "OK" : "ABSENT", bmeOk ? "0x77" : "ABSENT");
+  Serial.printf("HAL IMU requested=%.1fHz actual gyro=%.2fHz accel=%.2fHz dt=%.6fs DLPF=%s\n",
+                REQUESTED_IMU.sampleRateHz, actualImu.gyroRateHz,
+                actualImu.accelRateHz, actualImu.integrationDtSec,
+                actualImu.hardwareLowPassEnabled ? "ON" : "OFF");
+  return;
+  }
   Wire.beginTransmission(0x0D); // QMC5883L compass on the SEQURE GPS module.
   qmcOk = Wire.endTransmission() == 0;
   Serial.printf("QMC5883L I2C address=0x0D: %s\n", qmcOk ? "OK" : "not detected");
@@ -344,16 +526,30 @@ void setupBerryIMU() {
   }
   if (imuKind == ImuKind::ICM20948) {
     // ICM-20948 ODR = 1.1 kHz/(1+gyro_div), 1.125 kHz/(1+accel_div).
-    // Divisor 21 gives 50 Hz gyro and approximately 51.1 Hz accel output.
-    // This changes the production rate; it does not make the MCU block for
-    // 20 ms.  The sensor's DLPF remains a separate configuration concern.
+    // Keep the hardware rates and the AHRS per-sample integration interval in
+    // the single ICM_RATE_PROFILE above.
     ICM_20948_smplrt_t sampleRate{};
-    sampleRate.g = 21;
-    sampleRate.a = 21;
+    sampleRate.g = ICM_RATE_PROFILE.gyroDivider;
+    sampleRate.a = ICM_RATE_PROFILE.accelDivider;
     ICM_20948_Status_e status = icm20948.setSampleRate(
         ICM_20948_Internal_Acc | ICM_20948_Internal_Gyr, sampleRate);
-    Serial.printf("ICM ODR configuration: %s (gyro=50Hz, accel=51Hz)\n",
-                  status == ICM_20948_Stat_Ok ? "OK" : "FAILED");
+    ICM_20948_dlpcfg_t dlpf{};
+    dlpf.g = ICM_RATE_PROFILE.gyroDlpf;
+    dlpf.a = ICM_RATE_PROFILE.accelDlpf;
+    ICM_20948_Status_e dlpfConfigStatus = icm20948.setDLPFcfg(
+        ICM_20948_Internal_Acc | ICM_20948_Internal_Gyr, dlpf);
+    ICM_20948_Status_e dlpfEnableStatus = icm20948.enableDLPF(
+        ICM_20948_Internal_Acc | ICM_20948_Internal_Gyr, true);
+    Serial.printf("ICM ODR configuration: %s (gyro=%.2fHz, accel=%.2fHz, integration=%.3fs, DLPF=%s)\n",
+                  status == ICM_20948_Stat_Ok ? "OK" : "FAILED",
+                  ICM_RATE_PROFILE.gyroOdrHz, ICM_RATE_PROFILE.accelOdrHz,
+                  ICM_RATE_PROFILE.ahrsIntegrationDtSec,
+                  (dlpfConfigStatus == ICM_20948_Stat_Ok &&
+                   dlpfEnableStatus == ICM_20948_Stat_Ok) ? "ON" : "FAILED");
+    actualImu = {ICM_RATE_PROFILE.accelOdrHz, ICM_RATE_PROFILE.gyroOdrHz,
+                 ICM_RATE_PROFILE.ahrsIntegrationDtSec,
+                 REQUESTED_IMU.lowPassCutoffHz, true};
+    ahrs.setGyroIntegrationDt(actualImu.integrationDtSec);
   }
   baroOk = baro.begin(0x76);
   if (!baroOk) baroOk = baro.begin(0x77);
@@ -365,7 +561,8 @@ void setupBerryIMU() {
   Serial.printf("Qwiic GPS=%s QMC=%s IMU=%s BMP280=%s\n", gpsOk ? "OK" : "ABSENT",
                 qmcOk ? "OK" : "ABSENT",
                 imuKind == ImuKind::ICM20948 ? "ICM20948" :
-                imuKind == ImuKind::LSM9DS1 ? "LSM9DS1" : "ABSENT",
+                imuKind == ImuKind::LSM9DS1 ? "LSM9DS1" :
+                imuKind == ImuKind::QMI8658 ? "QMI8658" : "ABSENT",
                 baroOk ? "OK" : "ABSENT");
 }
 
@@ -400,10 +597,19 @@ bool readQmc5883p(float &x, float &y, float &z) {
 }
 
 void setupGPS() {
+  if (HARDWARE.kind == HalBoardKind::TBeamSupreme) {
+  pinMode(HARDWARE.gpsEnable, OUTPUT);
+  digitalWrite(HARDWARE.gpsEnable, HIGH);
+  pinMode(HARDWARE.gpsPps, INPUT);
+  Serial.printf("GNSS control: EN=GPIO%d HIGH PPS=GPIO%d input\n",
+                HARDWARE.gpsEnable, HARDWARE.gpsPps);
+  delay(250);
+  }
   static const uint32_t candidates[] = {38400, 9600, 115200};
   if (!sharedGps.begin(gpsSerial, HARDWARE.gpsRx, HARDWARE.gpsTx, candidates,
                        sizeof(candidates) / sizeof(candidates[0]))) {
-    Serial.println("u-blox GNSS not detected on GPIO43/44");
+    Serial.printf("u-blox GNSS not detected on GPIO%d/%d; UART activity probe failed\n",
+                  HARDWARE.gpsRx, HARDWARE.gpsTx);
     return;
   }
   gpsOk = sharedGps.configure(38400, 10);
@@ -430,8 +636,10 @@ void updateGPS(uint32_t nowMs) {
 }
 
 void setup() {
-  Serial.begin(115200); delay(500); Serial.println("ESP32-S3 Geek device test");
-  Serial.println("Built in: LCD, microSD, WiFi/BLE, USB, UART, GPIO, I2C");
+  Serial.begin(115200); delay(500);
+  HARDWARE = detectBoard() == HalBoardKind::TBeamSupreme
+      ? makeTBeamSupremeProfile() : makeGeekS3Profile();
+  Serial.printf("HAL board auto-detect: %s\n", HARDWARE.name);
   if (HARDWARE.hasLogButton) pinMode(HARDWARE.logButton, INPUT_PULLUP);
   halMakeSensorFrameRotation(HARDWARE.calibration.sensorPitchOffsetDeg,
                              HARDWARE.calibration.sensorRollOffsetDeg,
@@ -449,22 +657,39 @@ void setup() {
   halMultiplyMatrix(sensorFrameRotation,
       HARDWARE.calibration.compass[1].frameRotation, compassFrameRotation);
   ahrs.setCompassFrameRotation(1, compassFrameRotation);
+#if defined(TBEAM_QMI_RELEASE_AFTER_INIT)
+  setupDisplay(); setupStorage(); setupBerryIMU();
+  if (HARDWARE.kind == HalBoardKind::TBeamSupreme && imuOk) {
+    pinMode(34, OUTPUT); digitalWrite(34, HIGH);
+    imuOk = false;
+    imuKind = ImuKind::None;
+    Serial.println("T-Beam QMI8658 initialized, then FSPI released for SD test");
+  }
+  setupGPS(); setupG5Logging();
+#else
   setupDisplay(); setupStorage(); setupBerryIMU(); setupGPS(); setupG5Logging();
+#endif
   qmcPOk = setupQmc5883p();
-  Serial.printf("LCD=%s SD=%s GPS=%s QMC=%s IMU=%s BARO=%s flash=%uMB PSRAM=%s\n", displayOk ? "OK" : "FAIL",
+  Serial.printf("LCD=%s SD=%s GPS=%s QMC=%s IMU=%s BARO=%s flash=%uMB PSRAM=%s freeRAM=%uKB freePSRAM=%uKB totalPSRAM=%uKB\n", displayOk ? "OK" : "FAIL",
                 sdOk ? "OK" : "ABSENT", gpsOk ? "OK" : "ABSENT", qmcPOk ? "QMC5883P" : qmcOk ? "QMC?" : "ABSENT",
                 imuOk ? "OK" : "ABSENT", baroOk ? "OK" : "ABSENT",
                 ESP.getFlashChipSize() / 1048576,
-                psramFound() ? "YES" : "NO");
+                psramFound() ? "YES" : "NO",
+                (unsigned)(ESP.getFreeHeap() / 1024),
+                (unsigned)(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+                (unsigned)(ESP.getPsramSize() / 1024));
   Serial.println("SESSION_LOG READY (use START_LOG / STOP_LOG)");
 }
 
 void loop() {
   static uint32_t last = 0;
-  static uint32_t nextImuSampleUs = 0;
   static uint32_t nextCompass1SampleUs = 0;
   handleSerialCommands();
   updateLoggingButton();
+  if (sessionLog.pendingFlush()) {
+    sessionLog.stop();
+    Serial.println("SESSION_LOG STOPPED (BUFFER FLUSHED)");
+  }
   updateBootLogging();
   updateGPS(millis());
   if (qmcPOk) {
@@ -476,6 +701,20 @@ void loop() {
       uint64_t nowUs = sampleUs;
       if (sessionLog.active()) sessionLog.appendCompass(1, nowUs, qx, qy, qz, valid);
       ahrs.updateCompass(1, qx, qy, qz, valid, millis());
+    }
+  }
+  if (HARDWARE.kind == HalBoardKind::TBeamSupreme && qmcOk) {
+    static uint32_t nextQmcSampleUs = 0;
+    uint32_t sampleUs = micros();
+    if ((int32_t)(sampleUs - nextQmcSampleUs) >= 0) {
+      nextQmcSampleUs = sampleUs + COMPASS1_OUTPUT_PERIOD_US;
+      MagnetometerData data{};
+      bool valid = qmc6310.readData(data);
+      float x = data.magnetic_field.x, y = data.magnetic_field.y,
+            z = data.magnetic_field.z;
+      valid = valid && isfinite(x) && isfinite(y) && isfinite(z);
+      if (sessionLog.active()) sessionLog.appendCompass(1, sampleUs, x, y, z, valid);
+      ahrs.updateCompass(1, x, y, z, valid, millis());
     }
   }
   std::string g5Packet;
@@ -492,11 +731,15 @@ void loop() {
   if (imuOk) {
     sensors_event_t accel, gyro, mag;
     float ax, ay, az, gx, gy, gz, mx, my, mz;
-    if (imuKind == ImuKind::ICM20948) {
+    if (imuKind == ImuKind::QMI8658) {
+      if (!qmi8658.getDataReady()) { delay(1); return; }
+      qmi8658.getAccelerometer(qmiAccel.x, qmiAccel.y, qmiAccel.z);
+      qmi8658.getGyroscope(qmiGyro.x, qmiGyro.y, qmiGyro.z);
+      ax = qmiAccel.x * 9.80665f; ay = qmiAccel.y * 9.80665f; az = qmiAccel.z * 9.80665f;
+      gx = qmiGyro.x; gy = qmiGyro.y; gz = qmiGyro.z;
+      mx = my = mz = NAN;
+    } else if (imuKind == ImuKind::ICM20948) {
       if (!icm20948.dataReady()) { delay(1); return; }
-      uint32_t readyUs = micros();
-      if ((int32_t)(readyUs - nextImuSampleUs) < 0) { delay(1); return; }
-      nextImuSampleUs = readyUs + IMU_OUTPUT_PERIOD_US;
       icm20948.getAGMT();
       // SparkFun's accX/Y/Z accessors return milli-g, not g or m/s^2.
       // Convert to the SI units expected by AircraftAHRS and the log format.
@@ -523,8 +766,10 @@ void loop() {
     ahrs.updateCompass(0, mx, my, mz, compass0Valid, millis());
   }
   if (baroOk) {
-    float pressurePa = baro.readPressure();
-    float altitudeM = baro.readAltitude(1013.25f);
+    float pressurePa = HARDWARE.kind == HalBoardKind::TBeamSupreme
+        ? bme.readPressure() : baro.readPressure();
+    float altitudeM = HARDWARE.kind == HalBoardKind::TBeamSupreme
+        ? bme.readAltitude(1013.25f) : baro.readAltitude(1013.25f);
     uint64_t nowUs = micros();
     bool baroSampleValid = isfinite(pressurePa) && isfinite(altitudeM) && pressurePa > 0.0f;
     if (sessionLog.active()) sessionLog.appendBaro(nowUs, pressurePa, altitudeM, baroSampleValid);
@@ -533,10 +778,14 @@ void loop() {
   if (millis() - last >= 1000) {
     last = millis();
     char packet[128];
-    float pressure = baroOk ? baro.readPressure() / 100.0f : 0.0f;
-    snprintf(packet, sizeof(packet), "GEEK TEST=1 MILLIS=%lu LCD=%s SD=%s GPS=%s QMC=%s IMU=%s BARO=%s P=%.1f\n",
-             (unsigned long)last, displayOk ? "OK" : "FAIL", sdOk ? "OK" : "ABSENT",
-             gpsOk ? "OK" : "ABSENT", qmcPOk ? "QMC5883P" : qmcOk ? "QMC?" : "ABSENT", imuOk ? "OK" : "ABSENT",
+    float pressure = 0.0f;
+    if (baroOk) {
+      pressure = (HARDWARE.kind == HalBoardKind::TBeamSupreme
+          ? bme.readPressure() : baro.readPressure()) / 100.0f;
+    }
+    snprintf(packet, sizeof(packet), "%s TEST=1 MILLIS=%lu LCD=%s SD=%s GPS=%s QMC=%s IMU=%s BARO=%s P=%.1f\n",
+             HARDWARE.name, (unsigned long)last, displayOk ? "OK" : "FAIL", sdOk ? "OK" : "ABSENT",
+             gpsOk ? "OK" : "ABSENT", qmcPOk ? "QMC5883P" : qmcOk ? "QMC6310N" : "ABSENT", imuOk ? "OK" : "ABSENT",
              baroOk ? "OK" : "ABSENT", pressure);
     espnow.write(packet, true);
     Serial.print(packet);
@@ -544,7 +793,19 @@ void loop() {
     Serial.printf("AHRS roll=%.1f pitch=%.1f heading=%.1f baroAlt=%.1f climb=%.2f\n",
                   fused.rollDeg, fused.pitchDeg, fused.headingDeg,
                   fused.fusedAltitudeM, fused.fusedClimbRateMps);
-    updateDisplay(last, pressure);
+    const AircraftAHRS::State &displayState = ahrs.state(last);
+    HalDisplayStatus status{
+      gpsOk, imuOk, baroOk, qmcOk || qmcPOk, sdOk, sessionLog.active(),
+      lastG5PacketMs != 0 && (last - lastG5PacketMs) < 2000,
+      gpsFixQuality, gpsSatellites, gpsPdop, pressure,
+      displayState.rollDeg, displayState.pitchDeg, displayState.headingDeg,
+      displayState.groundSpeedMps, last / 1000,
+      static_cast<uint32_t>(sessionLog.dropped()),
+      static_cast<uint32_t>(ESP.getFreeHeap() / 1024),
+      static_cast<uint32_t>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+      sessionLog.freeLogSeconds()
+    };
+    updateDisplay(status);
   }
   delay(1);
 }

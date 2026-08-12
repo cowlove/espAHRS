@@ -1,22 +1,36 @@
 BOARD ?= esp32s3
-PORT ?= /dev/ttyACM0
+PORT ?= /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_48:CA:43:5A:CC:B8-if00
 UPLOAD_PORT := $(PORT)
 MONITOR_PORT := $(PORT)
 CHIP ?= esp32
+DEVICE ?= tbeam
 ALIBS = ${HOME}/Arduino/libraries
 GIT_VERSION := "$(shell git describe --abbrev=8 --dirty --always --tags 2>/dev/null || echo local)"
 
 CDC_ON_BOOT = 1
-# The board has QSPI PSRAM; OPI mode caused PSRAM initialization failure.
+# The application and HAL are common to both boards, but their boot-time
+# memory modes differ.  Keep this selection in the build layer so a binary
+# made for one module is not accidentally flashed to the other.
+ifeq ($(DEVICE),geek)
 BUILD_MEMORY_TYPE = qio_qspi
+BUILD_EXTRA_FLAGS += -DBOARD_HAS_PSRAM
+else
+BUILD_MEMORY_TYPE = qio_qspi
+BUILD_EXTRA_FLAGS += -DBOARD_HAS_PSRAM
+endif
 BUILD_EXTRA_FLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\"
 EXCLUDE_DIRS = ${ALIBS}/lvgl|${ALIBS}/TFT_eSPI|${ALIBS}/LovyanGFX|${ALIBS}/jimlib|${ALIBS}/esp32csim
 LIBS += ${ALIBS}/esp32jimlib ${ALIBS}/Arduino_CRC32
 LIBS += ${ALIBS}/Adafruit_GFX_Library ${ALIBS}/Adafruit_ST7735_and_ST7789_Library
 LIBS += ${ALIBS}/Adafruit_LSM9DS1_Library
 LIBS += ${ALIBS}/SparkFun_ICM-20948_ArduinoLibrary/src/ICM_20948.cpp
+LIBS += ${ALIBS}/SensorLib
+LIBS += ${ALIBS}/XPowersLib
+LIBS += ${ALIBS}/U8g2
+BUILD_EXTRA_FLAGS += -I${ALIBS}/U8g2/src
 BUILD_EXTRA_FLAGS += -I${ALIBS}/SparkFun_ICM-20948_ArduinoLibrary/src
 LIBS += ${ALIBS}/Adafruit_BMP280_Library ${ALIBS}/Adafruit_LIS3MDL
+LIBS += ${ALIBS}/Adafruit_BME280_Library
 LIBS += ${ALIBS}/SparkFun_u-blox_GNSS_Arduino_Library/src/SparkFun_u-blox_GNSS_Arduino_Library.cpp
 BUILD_EXTRA_FLAGS += -I${ALIBS}/SparkFun_u-blox_GNSS_Arduino_Library/src
 LIBS += ${ALIBS}/Adafruit_BusIO ${ALIBS}/Adafruit_Unified_Sensor

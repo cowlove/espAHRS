@@ -2,201 +2,144 @@
 #include <Arduino.h>
 #include <FS.h>
 #include <SD.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
-#include "freertos/task.h"
+#include <esp_heap_caps.h>
 #include "FusionLogFormat.h"
 
+// TEMPORARY LOGGING MODE:
+// Records are buffered in PSRAM and written synchronously when logging stops.
+// This is a compatibility workaround for the T-Beam's shared QMI/SD SPI
+// wiring. Replace it with a concurrent SD writer after shared-bus ownership
+// is redesigned; PSRAM is not intended to be the permanent log transport or
+// file-size limit.
 class FusionSessionLog {
-    // A slow card can pause writes long enough to absorb several sensor/G5
-    // bursts. Keep producer-side queueing separate from SD write latency.
-    static constexpr uint32_t QueueDepth = 128;
     static constexpr uint32_t MaxPayload = 512;
-    struct QueueItem { FusionLogRecordHeader header; uint8_t payload[MaxPayload]; };
-    File file_; QueueHandle_t queue_=nullptr; TaskHandle_t task_=nullptr;
-    FS *storage_=&SD;
-    volatile uint32_t sequence_=0, dropped_=0, written_=0, writeErrors_=0;
-    volatile bool active_=false;
-    // G5 callbacks and the main sensor loop can both produce records.  The
-    // sequence assignment and queue insertion must be one critical section;
-    // otherwise two producers can race and emit duplicate sequence numbers.
-    portMUX_TYPE producerMux_ = portMUX_INITIALIZER_UNLOCKED;
+    static constexpr uint32_t InternalRecords = 64;
+    FS *storage_ = &SD;
+    uint8_t *buffer_ = nullptr;
+    size_t capacityBytes_ = 0, bufferedBytes_ = 0;
+    uint32_t buffered_ = 0, sequence_ = 0;
+    volatile uint32_t dropped_ = 0, written_ = 0, writeErrors_ = 0;
+    volatile bool active_ = false, bufferFull_ = false;
+    bool psram_ = false;
     char fileName_[32] = {};
-    static void taskEntry(void *arg) { static_cast<FusionSessionLog *>(arg)->writerLoop(); }
-    void writerLoop() {
-        QueueItem item;
-        uint32_t sinceFlush = 0;
-        for (;;) {
-            if (xQueueReceive(queue_, &item, pdMS_TO_TICKS(100)) == pdTRUE) {
-                if (file_.write((const uint8_t *)&item.header, sizeof(item.header)) != sizeof(item.header) ||
-                    (item.header.payloadLength && file_.write(item.payload, item.header.payloadLength) != item.header.payloadLength))
-                    writeErrors_++;
-                else written_++;
-                if (++sinceFlush >= 16) {
-                    file_.flush();
-                    sinceFlush = 0;
-                }
-            } else {
-                if (!active_ && uxQueueMessagesWaiting(queue_) == 0) break;
-                // Avoid a flush for every momentary queue lull. The timed
-                // receive bounds flush latency when traffic is sparse.
-                if (sinceFlush != 0) {
-                    file_.flush();
-                    sinceFlush = 0;
-                }
-            }
+    portMUX_TYPE producerMux_ = portMUX_INITIALIZER_UNLOCKED;
+
+    bool allocateBuffer() {
+        const size_t freePsram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        // Some ESP32 builds report psramFound() even when PSRAM startup
+        // failed.  Require actual free SPIRAM before selecting the PSRAM
+        // capacity.  Use all but a small reserve, rather than requiring the
+        // full T-Beam-sized maximum on boards with smaller PSRAM.
+        const size_t reserve = 64 * 1024;
+        if (freePsram > reserve) {
+            capacityBytes_ = freePsram - reserve;
+            buffer_ = static_cast<uint8_t *>(heap_caps_malloc(
+                capacityBytes_, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+            if (buffer_) psram_ = true;
         }
-        file_.flush();
-        task_=nullptr;
-        vTaskDelete(nullptr);
+        else {
+            capacityBytes_ = InternalRecords * (sizeof(FusionLogRecordHeader) + MaxPayload);
+            buffer_ = static_cast<uint8_t *>(malloc(capacityBytes_));
+            if (buffer_) psram_ = false;
+        }
+        buffered_ = 0; bufferedBytes_ = 0; bufferFull_ = false;
+        return buffer_ != nullptr;
+    }
+    void releaseBuffer() {
+        if (buffer_) {
+            if (psram_) heap_caps_free(buffer_); else free(buffer_);
+        }
+        buffer_ = nullptr; capacityBytes_ = bufferedBytes_ = buffered_ = 0; psram_ = false;
+    }
+    bool writeBuffered() {
+        if (!buffer_ || !buffered_) return false;
+        pinMode(34, OUTPUT); digitalWrite(34, HIGH);
+        pinMode(47, OUTPUT); digitalWrite(47, HIGH);
+        File file = storage_->open(fileName_, FILE_WRITE);
+        if (!file) { writeErrors_++; return false; }
+        size_t offset = 0;
+        while (offset + sizeof(FusionLogRecordHeader) <= bufferedBytes_) {
+            FusionLogRecordHeader header;
+            memcpy(&header, buffer_ + offset, sizeof(header));
+            size_t recordBytes = sizeof(header) + header.payloadLength;
+            if (header.payloadLength > MaxPayload || offset + recordBytes > bufferedBytes_) { ++writeErrors_; file.close(); return false; }
+            bool ok = file.write(buffer_ + offset, recordBytes) == recordBytes;
+            if (ok) ++written_; else { ++writeErrors_; file.close(); return false; }
+            offset += recordBytes;
+        }
+        file.flush(); file.close();
+        return true;
     }
     void event(const char *s) { append(FUSION_LOG_EVENT, micros(), s, strlen(s)); }
+
 public:
     bool recoverLatest(FS &storage) {
         storage_ = &storage; unsigned latest = 0; bool found = false; char path[32] = {};
         File root = storage.open("/"); if (!root) return false; File entry;
         while ((entry = root.openNextFile())) {
-            if (!entry.isDirectory()) { unsigned n=0; char suffix=0; const char *name=entry.name();
-                if ((sscanf(name,"/fusion-%u.bin%c",&n,&suffix)==1 || sscanf(name,"fusion-%u.bin%c",&n,&suffix)==1) && (!found || n>latest)) {
-                    char candidate[32] = {};
-                    if (name[0] == '/') strncpy(candidate, name, sizeof(candidate)-1);
-                    else snprintf(candidate, sizeof(candidate), "/%s", name);
-                    File check = storage.open(candidate, FILE_READ);
-                    if (check) {
-                        check.close(); latest=n; found=true;
-                        strncpy(path,candidate,sizeof(path)-1);
-                    }
-                } }
+            if (!entry.isDirectory()) { unsigned n = 0; char suffix = 0; const char *name = entry.name();
+                if ((sscanf(name, "/fusion-%u.bin%c", &n, &suffix) == 1 || sscanf(name, "fusion-%u.bin%c", &n, &suffix) == 1) && (!found || n > latest)) {
+                    if (name[0] == '/') strncpy(path, name, sizeof(path)-1);
+                    else snprintf(path, sizeof(path), "/%s", name);
+                    latest = n; found = true;
+                }
+            }
             entry.close();
         }
-        root.close(); if (found) strncpy(fileName_,path,sizeof(fileName_)-1); return found;
+        root.close(); if (found) strncpy(fileName_, path, sizeof(fileName_)-1); return found;
     }
     bool begin(uint8_t cs, const char *prefix="/fusion-") {
-        storage_ = &SD;
-        if (!SD.begin(cs)) return false;
-        return beginMounted(prefix);
+        storage_ = &SD; if (!SD.begin(cs)) return false; return beginMounted(prefix);
     }
     bool begin(FS &storage, const char *prefix="/fusion-") {
-        storage_ = &storage;
-        return beginMounted(prefix);
+        storage_ = &storage; return beginMounted(prefix);
     }
 private:
     bool beginMounted(const char *prefix) {
-        // Enumerate the card rather than relying on a retained counter.  The
-        // files themselves are the durable sequence state across reboots.
-        unsigned next = 0;
-        File root = storage_->open("/");
-        if (root) {
-            File entry;
-            while ((entry = root.openNextFile())) {
-                if (!entry.isDirectory()) {
-                    const char *name = entry.name();
-                    unsigned number = 0;
-                    char suffix = 0;
-                    if (sscanf(name, "/fusion-%u.bin%c", &number, &suffix) == 1 ||
-                        sscanf(name, "fusion-%u.bin%c", &number, &suffix) == 1) {
-                        if (number < 10000 && number >= next) next = number + 1;
-                    }
-                }
-                entry.close();
-            }
-            root.close();
-        }
-        if (next >= 10000) return false;
-        char n[32]; snprintf(n,sizeof(n),"%s%04u.bin",prefix,next);
-        if (storage_->exists(n)) return false;
-                strncpy(fileName_, n, sizeof(fileName_) - 1);
-        fileName_[sizeof(fileName_) - 1] = '\0';
-        { file_=storage_->open(n,FILE_WRITE); if (!file_) return false;
-                sequence_=0;
-                queue_=xQueueCreate(QueueDepth,sizeof(QueueItem));
-                if (!queue_) { file_.close(); return false; }
-                active_=true;
-                if (xTaskCreatePinnedToCore(taskEntry,"fusion-log",8192,this,1,&task_,1)!=pdPASS) {
-                    active_=false; vQueueDelete(queue_); queue_=nullptr; file_.close(); return false;
-                }
-                event("START"); return true; }
+        snprintf(fileName_, sizeof(fileName_), "%s%04lu.bin", prefix, (unsigned long)(millis() % 10000UL));
+        sequence_ = 0; if (!allocateBuffer()) return false;
+        Serial.printf("SESSION_LOG BUFFER bytes=%lu storage=%s\n",
+                      (unsigned long)capacityBytes_, psram_ ? "PSRAM" : "INTERNAL");
+        active_ = true; event("START"); return true;
     }
 public:
     void stop() {
-        if (!active_) return; event("STOP"); active_=false;
-        uint32_t deadline=millis()+2000;
-        while (task_ && (int32_t)(deadline-millis())>0) delay(5);
-        if (task_) { vTaskDelete(task_); task_=nullptr; }
-        if (file_) { file_.flush(); file_.close(); }
-        if (queue_) { vQueueDelete(queue_); queue_=nullptr; }
+        if (!active_ && !buffer_) return;
+        if (active_) event(bufferFull_ ? "STOP_BUFFER_FULL" : "STOP");
+        active_ = false; writeBuffered(); releaseBuffer();
     }
     bool active() const { return active_; }
+    bool pendingFlush() const { return buffer_ != nullptr && !active_; }
     uint32_t dropped() const { return dropped_; }
     uint32_t written() const { return written_; }
     uint32_t writeErrors() const { return writeErrors_; }
+    uint32_t buffered() const { return buffered_; }
+    uint32_t capacity() const { return (uint32_t)capacityBytes_; }
+    bool usingPsram() const { return psram_; }
+    uint32_t freeLogSeconds(float recordsPerSecond = 50.0f) const {
+        if (!capacityBytes_ || recordsPerSecond <= 0.0f) return 0;
+        // 128 bytes/record is a conservative estimate for this log mix.
+        const float remainingRecords = (float)(capacityBytes_ - (bufferedBytes_ < capacityBytes_ ? bufferedBytes_ : capacityBytes_)) / 128.0f;
+        return (uint32_t)(remainingRecords / recordsPerSecond);
+    }
     const char *fileName() const { return fileName_; }
-    size_t fileSize() const {
-        if (!storage_ || !fileName_[0]) return 0;
-        File f = storage_->open(fileName_, FILE_READ);
-        if (!f) return 0;
-        size_t n = f.size();
-        f.close();
-        return n;
-    }
-    File openRead() const {
-        if (!storage_ || !fileName_[0]) return File();
-        return storage_->open(fileName_, FILE_READ);
-    }
-    size_t dumpTo(Stream &out) const {
-        if (!storage_ || !fileName_[0]) return 0;
-        File f = storage_->open(fileName_, FILE_READ);
-        if (!f) return 0;
-        uint8_t buf[512];
-        size_t total = 0;
-        while (f.available()) {
-            size_t n = f.read(buf, sizeof(buf));
-            if (!n) break;
-            size_t sent = 0;
-            while (sent < n) {
-                size_t written = out.write(buf + sent, n - sent);
-                if (written) sent += written;
-                else { delay(1); yield(); }
-            }
-            total += n;
-        }
-        f.close();
-        return total;
-    }
-    bool append(FusionLogType type,uint64_t t,const void *p,uint32_t n) {
-        if (!active_ || n>MaxPayload) { if (active_) dropped_++; return false; }
-        QueueItem item; item.header.timestampUs=t;
-        item.header.type=type; item.header.payloadLength=n;
-        if (n) memcpy(item.payload,p,n);
+    size_t fileSize() const { File f = storage_->open(fileName_, FILE_READ); if (!f) return 0; size_t n=f.size(); f.close(); return n; }
+    File openRead() const { return storage_->open(fileName_, FILE_READ); }
+    bool append(FusionLogType type, uint64_t t, const void *p, uint32_t n) {
+        if (!active_ || n > MaxPayload) { if (active_) ++dropped_; return false; }
         portENTER_CRITICAL(&producerMux_);
-        item.header.sequence=sequence_++;
-        const bool queued = xQueueSend(queue_,&item,0)==pdTRUE;
-        portEXIT_CRITICAL(&producerMux_);
-        if (!queued) { dropped_++; return false; }
-        return true;
+        const size_t recordBytes = sizeof(FusionLogRecordHeader) + n;
+        if (bufferedBytes_ + recordBytes > capacityBytes_) { bufferFull_ = true; active_ = false; ++dropped_; portEXIT_CRITICAL(&producerMux_); return false; }
+        FusionLogRecordHeader header;
+        header.magic=0x31474F4CUL; header.timestampUs=t; header.sequence=sequence_++; header.type=type; header.payloadLength=n;
+        memcpy(buffer_ + bufferedBytes_, &header, sizeof(header));
+        if (n) memcpy(buffer_ + bufferedBytes_ + sizeof(header), p, n);
+        bufferedBytes_ += recordBytes; ++buffered_;
+        portEXIT_CRITICAL(&producerMux_); return true;
     }
-    bool appendImu(uint64_t t, float gx, float gy, float gz,
-                   float ax, float ay, float az, bool valid=true) {
-        FusionImuRecord r{t,gx,gy,gz,ax,ay,az,(uint8_t)(valid ? 1 : 0)};
-        return append(FUSION_LOG_IMU,t,&r,sizeof(r));
-    }
-    bool appendGps(uint32_t t, int32_t latE7, int32_t lonE7,
-                   int32_t altitudeMm, uint32_t speedMmps, int32_t headingE5,
-                   bool valid) {
-        FusionGpsRecord r{t,latE7,lonE7,altitudeMm,speedMmps,headingE5,
-                          (uint8_t)(valid ? 1 : 0)};
-        return append(FUSION_LOG_GPS,(uint64_t)t*1000ULL,&r,sizeof(r));
-    }
-    bool appendBaro(uint64_t t, float pressurePa, float altitudeM, bool valid=true) {
-        FusionBaroRecord r{t,pressurePa,altitudeM,(uint8_t)(valid ? 1 : 0)};
-        return append(FUSION_LOG_BARO,t,&r,sizeof(r));
-    }
-    bool appendCompass(uint8_t source, uint64_t t, float x, float y, float z,
-                       bool valid=true) {
-        if (source > 1) return false;
-        FusionCompassRecord r{t,x,y,z,(uint8_t)(valid ? 1 : 0)};
-        return append(source == 0 ? FUSION_LOG_COMPASS0 : FUSION_LOG_COMPASS1,
-                      t,&r,sizeof(r));
-    }
-    void flush() { /* writer task owns SD I/O; it flushes when the queue drains */ }
+    bool appendImu(uint64_t t,float gx,float gy,float gz,float ax,float ay,float az,bool valid=true) { FusionImuRecord r{t,gx,gy,gz,ax,ay,az,(uint8_t)(valid?1:0)}; return append(FUSION_LOG_IMU,t,&r,sizeof(r)); }
+    bool appendGps(uint32_t t,int32_t lat,int32_t lon,int32_t alt,uint32_t speed,int32_t heading,bool valid) { FusionGpsRecord r{t,lat,lon,alt,speed,heading,(uint8_t)(valid?1:0)}; return append(FUSION_LOG_GPS,(uint64_t)t*1000ULL,&r,sizeof(r)); }
+    bool appendBaro(uint64_t t,float pressure,float altitude,bool valid=true) { FusionBaroRecord r{t,pressure,altitude,(uint8_t)(valid?1:0)}; return append(FUSION_LOG_BARO,t,&r,sizeof(r)); }
+    bool appendCompass(uint8_t source,uint64_t t,float x,float y,float z,bool valid=true) { if(source>1)return false; FusionCompassRecord r{t,x,y,z,(uint8_t)(valid?1:0)}; return append(source?FUSION_LOG_COMPASS1:FUSION_LOG_COMPASS0,t,&r,sizeof(r)); }
+    void flush() {}
 };

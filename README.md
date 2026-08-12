@@ -82,9 +82,25 @@ Verified against the vendor ESP32-S3-GEEK demo sources: SCLK `12`, MOSI
 
 ## AircraftAHRS, replay, and session logging
 
+The current buffer-first logfile implementation is temporary. It captures
+records in PSRAM and pauses the runtime while flushing them to SD when logging
+stops. This accommodates the T-Beam's shared QMI/SD SPI wiring; the intended
+long-term design is a concurrent SD write stream. The ESP32-S3 PSRAM build
+configuration is permanent and is separate from this temporary logging mode.
+
 The GEEK project contains its own copies of the fusion, logging, GPS, and
 replay sources. It no longer depends on a sibling T-Beam checkout. The
 replay/AHRS tuning workflow is documented in [TUNING.md](TUNING.md).
+
+### Board-specific build settings
+
+Both boards compile the same application and HAL sources. Only the ESP32-S3
+memory/boot mode is selected per device by the Makefile:
+
+```sh
+make DEVICE=tbeam                 # qio_qspi, octal PSRAM
+make DEVICE=geek PORT=<geek-port> # qio_qspi, GEEK memory layout
+```
 
 At startup the GEEK firmware probes the ICM-20948 at both possible addresses,
 then falls back to the LSM9DS1. The selected device's accelerometer, gyro, and
