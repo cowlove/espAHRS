@@ -27,7 +27,7 @@ struct HalImuConfiguration {
 };
 
 struct HalDisplayStatus {
-  bool gps, imu, baro, compass, sd, logging, g5;
+  bool gps, imu1, imu2, baro, compass, sd, logging, g5;
   uint8_t gpsFixQuality, gpsSatellites;
   float gpsPdop, pressureHpa, rollDeg, pitchDeg, headingDeg, groundSpeedMps;
   uint32_t uptimeSeconds, droppedLogRecords;

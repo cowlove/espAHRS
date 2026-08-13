@@ -88,6 +88,11 @@ uint32_t baroReadyAfterMs = 0;
 enum class ImuKind { None, LSM9DS1, ICM20948, QMI8658 };
 ImuKind imuKind = ImuKind::None;
 bool secondaryImuOk = false;
+uint32_t lastPrimaryImuSampleMs = 0;
+uint32_t lastSecondaryImuSampleMs = 0;
+uint32_t lastImuRecoveryAttemptMs = 0;
+constexpr uint32_t IMU_HEALTH_TIMEOUT_MS = 500;
+constexpr uint32_t IMU_RECOVERY_PERIOD_MS = 1000;
 constexpr uint8_t SECONDARY_LSM6DSL = 0x6A;
 constexpr uint8_t BERRY_BARO_ADDRESS = 0x77;
 constexpr uint32_t BARO_OUTPUT_PERIOD_US = 40000; // 25 Hz
@@ -119,6 +124,15 @@ static bool secondaryLsm6Write(uint8_t reg, uint8_t value) {
   Wire.beginTransmission(SECONDARY_LSM6DSL); Wire.write(reg); Wire.write(value);
   return Wire.endTransmission() == 0;
 }
+static bool probePrimaryIcm();
+extern bool imuOk;
+static bool configureSecondaryLsm6() {
+  uint8_t whoAmI = 0;
+  if (!secondaryLsm6Read(0x0F, &whoAmI, 1) || whoAmI != 0x6A) return false;
+  return secondaryLsm6Write(0x12, 0x44) &&
+         secondaryLsm6Write(0x11, 0x40) &&
+         secondaryLsm6Write(0x10, 0x42);
+}
 static bool readSecondaryLsm6(float &gx, float &gy, float &gz,
                               float &ax, float &ay, float &az, float &temp) {
   uint8_t b[12], t[2];
@@ -130,6 +144,27 @@ static bool readSecondaryLsm6(float &gx, float &gy, float &gz,
   az = s16(b[10],b[11]) * accelMps2PerLsb;
   temp = secondaryLsm6Read(0x20, t, 2) ? 25.0f + s16(t[0],t[1]) / 256.0f : NAN;
   return true;
+}
+
+static bool imuRecentlyHealthy(uint32_t lastSampleMs, uint32_t nowMs) {
+  return lastSampleMs != 0 && (uint32_t)(nowMs - lastSampleMs) <= IMU_HEALTH_TIMEOUT_MS;
+}
+
+static void recoverGeekImus(uint32_t nowMs) {
+  if (HARDWARE.kind != HalBoardKind::GeekS3 ||
+      (uint32_t)(nowMs - lastImuRecoveryAttemptMs) < IMU_RECOVERY_PERIOD_MS) return;
+  lastImuRecoveryAttemptMs = nowMs;
+
+  if (!imuRecentlyHealthy(lastPrimaryImuSampleMs, nowMs)) {
+    bool wasDetected = imuOk;
+    imuOk = probePrimaryIcm();
+    if (imuOk && !wasDetected) Serial.println("IMU1 ICM-20948 detected/recovered");
+  }
+  if (!imuRecentlyHealthy(lastSecondaryImuSampleMs, nowMs)) {
+    bool wasDetected = secondaryImuOk;
+    secondaryImuOk = configureSecondaryLsm6();
+    if (secondaryImuOk && !wasDetected) Serial.println("IMU2 LSM6DSL detected/recovered");
+  }
 }
 
 struct GyroDriftLogger {
@@ -302,7 +337,7 @@ void halUpdateDisplay(const HalDisplayStatus &status) {
       tbeamDisplay.drawStr(x + 2, y, label); tbeamDisplay.setDrawColor(1);
       taskYIELD();
     };
-    health(0, 10, "GPS", status.gps); health(44, 10, "IMU", status.imu);
+    health(0, 10, "GPS", status.gps); health(44, 10, "I1", status.imu1);
     health(88, 10, "SD", status.sd);
     health(0, 22, "BARO", status.baro); health(44, 22, "MAG", status.compass);
     health(88, 22, "LOG", status.logging);
@@ -338,9 +373,10 @@ void halUpdateDisplay(const HalDisplayStatus &status) {
 
   beginRow(1, 2);
   display.setTextColor(status.gpsPdop < 2.0f ? ST77XX_GREEN : status.gpsPdop < 4.0f ? ST77XX_YELLOW : ST77XX_RED, ST77XX_BLACK);
-  display.printf("PD%.1f ", status.gpsPdop);
+  display.printf("P%.1f ", status.gpsPdop);
   display.setTextColor(status.compass ? ST77XX_GREEN : ST77XX_RED); display.print("CP ");
-  display.setTextColor(status.imu ? ST77XX_GREEN : ST77XX_RED); display.print("IM ");
+  display.setTextColor(status.imu1 ? ST77XX_GREEN : ST77XX_RED); display.print("I1 ");
+  display.setTextColor(status.imu2 ? ST77XX_GREEN : ST77XX_RED); display.print("I2 ");
   display.setTextColor(status.sd ? ST77XX_GREEN : ST77XX_RED); display.print("SD ");
   display.setTextColor(status.g5 ? ST77XX_GREEN : ST77XX_RED); display.print("G5");
 
@@ -630,6 +666,35 @@ void handleSerialCommands() {
   }
 }
 
+static bool configurePrimaryIcm() {
+  ICM_20948_smplrt_t sampleRate{};
+  sampleRate.g = ICM_RATE_PROFILE.gyroDivider;
+  sampleRate.a = ICM_RATE_PROFILE.accelDivider;
+  ICM_20948_Status_e rateStatus = icm20948.setSampleRate(
+      ICM_20948_Internal_Acc | ICM_20948_Internal_Gyr, sampleRate);
+  ICM_20948_dlpcfg_t dlpf{};
+  dlpf.g = ICM_RATE_PROFILE.gyroDlpf;
+  dlpf.a = ICM_RATE_PROFILE.accelDlpf;
+  ICM_20948_Status_e configStatus = icm20948.setDLPFcfg(
+      ICM_20948_Internal_Acc | ICM_20948_Internal_Gyr, dlpf);
+  ICM_20948_Status_e enableStatus = icm20948.enableDLPF(
+      ICM_20948_Internal_Acc | ICM_20948_Internal_Gyr, true);
+  actualImu = {ICM_RATE_PROFILE.accelOdrHz, ICM_RATE_PROFILE.gyroOdrHz,
+               ICM_RATE_PROFILE.ahrsIntegrationDtSec,
+               REQUESTED_IMU.lowPassCutoffHz, true};
+  ahrs.setGyroIntegrationDt(actualImu.integrationDtSec);
+  return rateStatus == ICM_20948_Stat_Ok &&
+         configStatus == ICM_20948_Stat_Ok && enableStatus == ICM_20948_Stat_Ok;
+}
+
+static bool probePrimaryIcm() {
+  bool found = icm20948.begin(Wire, false) == ICM_20948_Stat_Ok ||
+               icm20948.begin(Wire, true) == ICM_20948_Stat_Ok;
+  if (!found) return false;
+  imuKind = ImuKind::ICM20948;
+  return configurePrimaryIcm();
+}
+
 void setupBerryIMU() {
   // BerryIMUv3 normally uses I2C: LSM9DS1 XG=0x6B, magnetometer=0x1C,
   // BMP280=0x76 (some modules strap the barometer to 0x77).
@@ -646,14 +711,7 @@ void setupBerryIMU() {
                      secondaryWhoAmI == 0x6A;
     if (!secondaryImuOk) delay(25);
   }
-  if (secondaryImuOk) {
-    secondaryLsm6Write(0x12, 0x44); // BDU and register-address auto-increment
-    // For the 50 Hz application stream, use roughly two internal samples per
-    // delivered sample. At 104 Hz the gyro's fixed LPF2 is about 33 Hz; the
-    // accelerometer LPF1 ODR/4 selection gives about 26 Hz bandwidth.
-    secondaryLsm6Write(0x11, 0x40); // gyro: 104 Hz, 245 dps
-    secondaryLsm6Write(0x10, 0x42); // accel: 104 Hz, 2 g, LPF1 ODR/4
-  }
+  if (secondaryImuOk) secondaryImuOk = configureSecondaryLsm6();
   Serial.printf("Secondary LSM6DSL address=0x6A: %s (WHO_AM_I=0x%02X)\n", secondaryImuOk ? "OK" : "not detected", secondaryWhoAmI);
   if (HARDWARE.kind == HalBoardKind::TBeamSupreme) {
   Serial.println("T-Beam I2C scan SDA=17 SCL=18");
@@ -739,13 +797,8 @@ void setupBerryIMU() {
   // Prefer the newer SparkFun ICM-20948, then fall back to the BerryIMUv3
   // LSM9DS1. ADR selects 0x68/0x69 on the ICM board; the library's ad0val
   // argument maps directly to that address bit.
-  if (icm20948.begin(Wire, false) == ICM_20948_Stat_Ok) {
-    imuKind = ImuKind::ICM20948;
-    imuOk = true;
-  } else if (icm20948.begin(Wire, true) == ICM_20948_Stat_Ok) {
-    imuKind = ImuKind::ICM20948;
-    imuOk = true;
-  } else {
+  imuOk = probePrimaryIcm();
+  if (!imuOk) {
     imuOk = imu.begin();
     if (imuOk) imuKind = ImuKind::LSM9DS1;
   }
@@ -753,28 +806,10 @@ void setupBerryIMU() {
     // ICM-20948 ODR = 1.1 kHz/(1+gyro_div), 1.125 kHz/(1+accel_div).
     // Keep the hardware rates and the AHRS per-sample integration interval in
     // the single ICM_RATE_PROFILE above.
-    ICM_20948_smplrt_t sampleRate{};
-    sampleRate.g = ICM_RATE_PROFILE.gyroDivider;
-    sampleRate.a = ICM_RATE_PROFILE.accelDivider;
-    ICM_20948_Status_e status = icm20948.setSampleRate(
-        ICM_20948_Internal_Acc | ICM_20948_Internal_Gyr, sampleRate);
-    ICM_20948_dlpcfg_t dlpf{};
-    dlpf.g = ICM_RATE_PROFILE.gyroDlpf;
-    dlpf.a = ICM_RATE_PROFILE.accelDlpf;
-    ICM_20948_Status_e dlpfConfigStatus = icm20948.setDLPFcfg(
-        ICM_20948_Internal_Acc | ICM_20948_Internal_Gyr, dlpf);
-    ICM_20948_Status_e dlpfEnableStatus = icm20948.enableDLPF(
-        ICM_20948_Internal_Acc | ICM_20948_Internal_Gyr, true);
-    Serial.printf("ICM ODR configuration: %s (gyro=%.2fHz, accel=%.2fHz, integration=%.3fs, DLPF=%s)\n",
-                  status == ICM_20948_Stat_Ok ? "OK" : "FAILED",
+    Serial.printf("ICM ODR configuration: %s (gyro=%.2fHz, accel=%.2fHz, integration=%.3fs, DLPF=ON)\n",
+                  imuOk ? "OK" : "FAILED",
                   ICM_RATE_PROFILE.gyroOdrHz, ICM_RATE_PROFILE.accelOdrHz,
-                  ICM_RATE_PROFILE.ahrsIntegrationDtSec,
-                  (dlpfConfigStatus == ICM_20948_Stat_Ok &&
-                   dlpfEnableStatus == ICM_20948_Stat_Ok) ? "ON" : "FAILED");
-    actualImu = {ICM_RATE_PROFILE.accelOdrHz, ICM_RATE_PROFILE.gyroOdrHz,
-                 ICM_RATE_PROFILE.ahrsIntegrationDtSec,
-                 REQUESTED_IMU.lowPassCutoffHz, true};
-    ahrs.setGyroIntegrationDt(actualImu.integrationDtSec);
+                  ICM_RATE_PROFILE.ahrsIntegrationDtSec);
   }
   baroOk = baro.begin(0x76);
   if (!baroOk) baroOk = baro.begin(0x77);
@@ -976,18 +1011,19 @@ void loop() {
                                                 g5Packet.data(), g5Packet.size());
     Serial.printf("G5_PACKET len=%u\n", (unsigned)g5Packet.size());
   }
+  recoverGeekImus(millis());
   if (imuOk) {
     sensors_event_t accel, gyro, mag;
     float ax, ay, az, gx, gy, gz, mx, my, mz;
     if (imuKind == ImuKind::QMI8658) {
-      if (!qmi8658.getDataReady()) { delay(1); return; }
+      if (!qmi8658.getDataReady()) goto afterPrimaryImu;
       qmi8658.getAccelerometer(qmiAccel.x, qmiAccel.y, qmiAccel.z);
       qmi8658.getGyroscope(qmiGyro.x, qmiGyro.y, qmiGyro.z);
       ax = qmiAccel.x * 9.80665f; ay = qmiAccel.y * 9.80665f; az = qmiAccel.z * 9.80665f;
       gx = qmiGyro.x; gy = qmiGyro.y; gz = qmiGyro.z;
       mx = my = mz = NAN;
     } else if (imuKind == ImuKind::ICM20948) {
-      if (!icm20948.dataReady()) { delay(1); return; }
+      if (!icm20948.dataReady()) goto afterPrimaryImu;
       icm20948.getAGMT();
       // SparkFun's accX/Y/Z accessors return milli-g, not g or m/s^2.
       // Convert to the SI units expected by AircraftAHRS and the log format.
@@ -1002,6 +1038,7 @@ void loop() {
     }
     uint64_t nowUs = micros();
     bool imuSampleValid = isfinite(ax) && isfinite(ay) && isfinite(az) && isfinite(gx) && isfinite(gy) && isfinite(gz);
+    if (imuSampleValid) lastPrimaryImuSampleMs = millis();
     bool compass0Valid = isfinite(mx) && isfinite(my) && isfinite(mz);
     gyroDrift.add(0, gx, gy, gz);
     if (sessionLog.active()) sessionLog.appendImu(nowUs,
@@ -1023,11 +1060,13 @@ void loop() {
                    bodyAx, bodyAy, bodyAz, imuSampleValid);
     ahrs.updateCompass(0, mx, my, mz, compass0Valid, millis());
   }
+afterPrimaryImu:
   float secondaryTemp = NAN;
   if (secondaryImuOk) {
     float sgx, sgy, sgz, sax, say, saz;
     uint64_t secondaryNowUs = micros();
     if (readSecondaryLsm6(sgx, sgy, sgz, sax, say, saz, secondaryTemp)) {
+      lastSecondaryImuSampleMs = millis();
       gyroDrift.add(1, sgx, sgy, sgz);
       if (sessionLog.active()) sessionLog.appendImu(1, secondaryNowUs,
         sgx, sgy, sgz, sax, say, saz,
@@ -1071,9 +1110,12 @@ void loop() {
     if (baroOk) {
       pressure = latestBaroPressurePa / 100.0f;
     }
-    snprintf(packet, sizeof(packet), "%s TEST=1 MILLIS=%lu LCD=%s SD=%s GPS=%s QMC=%s IMU=%s BARO=%s P=%.1f\n",
+    bool imu1Healthy = imuRecentlyHealthy(lastPrimaryImuSampleMs, last);
+    bool imu2Healthy = imuRecentlyHealthy(lastSecondaryImuSampleMs, last);
+    snprintf(packet, sizeof(packet), "%s TEST=1 MILLIS=%lu LCD=%s SD=%s GPS=%s QMC=%s I1=%s I2=%s BARO=%s P=%.1f\n",
              HARDWARE.name, (unsigned long)last, displayOk ? "OK" : "FAIL", sdOk ? "OK" : "ABSENT",
-             gpsOk ? "OK" : "ABSENT", qmcPOk ? "QMC5883P" : qmcOk ? "QMC6310N" : "ABSENT", imuOk ? "OK" : "ABSENT",
+             gpsOk ? "OK" : "ABSENT", qmcPOk ? "QMC5883P" : qmcOk ? "QMC6310N" : "ABSENT",
+             imu1Healthy ? "OK" : "BAD", imu2Healthy ? "OK" : "BAD",
              baroOk ? "OK" : "ABSENT", pressure);
     espnow.write(packet, true);
     Serial.print(packet);
@@ -1083,7 +1125,7 @@ void loop() {
                   fused.fusedAltitudeM, fused.fusedClimbRateMps);
     const AircraftAHRS::State &displayState = ahrs.state(last);
     HalDisplayStatus status{
-      gpsOk, imuOk, baroOk, qmcOk || qmcPOk, sdOk, sessionLog.active(),
+      gpsOk, imu1Healthy, imu2Healthy, baroOk, qmcOk || qmcPOk, sdOk, sessionLog.active(),
       lastG5PacketMs != 0 && (last - lastG5PacketMs) < 2000,
       gpsFixQuality, gpsSatellites, gpsPdop, pressure,
       displayState.rollDeg, displayState.pitchDeg, displayState.headingDeg,
