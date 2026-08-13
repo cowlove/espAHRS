@@ -30,6 +30,7 @@ LIBS += ${ALIBS}/U8g2
 BUILD_EXTRA_FLAGS += -I${ALIBS}/U8g2/src
 BUILD_EXTRA_FLAGS += -I${ALIBS}/SparkFun_ICM-20948_ArduinoLibrary/src
 LIBS += ${ALIBS}/Adafruit_BMP280_Library ${ALIBS}/Adafruit_LIS3MDL
+LIBS += ${ALIBS}/Adafruit_BMP3XX_Library
 LIBS += ${ALIBS}/Adafruit_BME280_Library
 LIBS += ${ALIBS}/SparkFun_u-blox_GNSS_Arduino_Library/src/SparkFun_u-blox_GNSS_Arduino_Library.cpp
 BUILD_EXTRA_FLAGS += -I${ALIBS}/SparkFun_u-blox_GNSS_Arduino_Library/src

@@ -14,6 +14,7 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_LSM9DS1.h>
 #include <Adafruit_BMP280.h>
+#include <Adafruit_BMP3XX.h>
 #include <Adafruit_BME280.h>
 #include <ICM_20948.h>
 #include <SensorQMI8658.hpp>
@@ -76,12 +77,37 @@ IMUdata qmiAccel, qmiGyro;
 U8G2_SH1106_128X64_NONAME_1_HW_I2C tbeamDisplay(U8G2_R0, U8X8_PIN_NONE);
 uint8_t tbeamDisplayAddress = 0;
 Adafruit_BMP280 baro;
+Adafruit_BMP3XX bmp3;
 Adafruit_BME280 bme;
 bool bmeOk = false;
+enum class BaroKind { None, BMP280, BMP388, BMP390, BME280 };
+BaroKind baroKind = BaroKind::None;
+float latestBaroPressurePa = NAN, latestBaroAltitudeM = NAN;
+uint32_t baroReadyAfterMs = 0;
 enum class ImuKind { None, LSM9DS1, ICM20948, QMI8658 };
 ImuKind imuKind = ImuKind::None;
 bool secondaryImuOk = false;
 constexpr uint8_t SECONDARY_LSM6DSL = 0x6A;
+constexpr uint8_t BERRY_BARO_ADDRESS = 0x77;
+constexpr uint32_t BARO_OUTPUT_PERIOD_US = 40000; // 25 Hz
+
+static bool i2cReadRegister(uint8_t address, uint8_t reg, uint8_t &value) {
+  Wire.beginTransmission(address); Wire.write(reg);
+  if (Wire.endTransmission(false) != 0 ||
+      Wire.requestFrom(address, (uint8_t)1) != 1) return false;
+  value = Wire.read();
+  return true;
+}
+
+static const char *baroKindName() {
+  switch (baroKind) {
+  case BaroKind::BMP280: return "BMP280";
+  case BaroKind::BMP388: return "BMP388";
+  case BaroKind::BMP390: return "BMP390";
+  case BaroKind::BME280: return "BME280";
+  default: return "ABSENT";
+  }
+}
 static bool secondaryLsm6Read(uint8_t reg, uint8_t *buf, size_t n) {
   Wire.beginTransmission(SECONDARY_LSM6DSL); Wire.write(reg);
   if (Wire.endTransmission(false) != 0 || Wire.requestFrom(SECONDARY_LSM6DSL, (uint8_t)n) != n) return false;
@@ -689,6 +715,7 @@ void setupBerryIMU() {
 #endif
   bmeOk = bme.begin(0x77, &Wire);
   baroOk = bmeOk;
+  baroKind = bmeOk ? BaroKind::BME280 : BaroKind::None;
   imuKind = imuOk ? ImuKind::QMI8658 : ImuKind::None;
   Serial.printf("T-Beam PMU=%s QMI8658=%s BME280=%s\n", pmuOk ? "OK" : "ABSENT",
                 imuOk ? "OK" : "ABSENT", bmeOk ? "0x77" : "ABSENT");
@@ -743,17 +770,38 @@ void setupBerryIMU() {
   }
   baroOk = baro.begin(0x76);
   if (!baroOk) baroOk = baro.begin(0x77);
+  if (baroOk) {
+    baroKind = BaroKind::BMP280;
+  } else {
+    uint8_t chipId = 0;
+    bool chipIdOk = i2cReadRegister(BERRY_BARO_ADDRESS, 0x00, chipId);
+    Serial.printf("Berry barometer address=0x%02X chip_id=%s0x%02X\n",
+                  BERRY_BARO_ADDRESS, chipIdOk ? "" : "unreadable/", chipId);
+    if (chipIdOk && (chipId == 0x50 || chipId == 0x60) &&
+        bmp3.begin_I2C(BERRY_BARO_ADDRESS, &Wire)) {
+      bmp3.setTemperatureOversampling(BMP3_OVERSAMPLING_2X);
+      bmp3.setPressureOversampling(BMP3_OVERSAMPLING_4X);
+      bmp3.setIIRFilterCoeff(BMP3_IIR_FILTER_COEFF_3);
+      bmp3.setOutputDataRate(BMP3_ODR_25_HZ);
+      baroKind = chipId == 0x50 ? BaroKind::BMP388 : BaroKind::BMP390;
+      baroOk = true;
+      // The BMP388 produces compensated but implausible pressure briefly
+      // after reset. Preserve those raw samples as invalid log records, and
+      // keep them out of altitude/climb state until the compensation settles.
+      baroReadyAfterMs = millis() + 2500;
+    }
+  }
   if (imuKind == ImuKind::LSM9DS1) {
     imu.setupAccel(imu.LSM9DS1_ACCELRANGE_4G, imu.LSM9DS1_ACCELDATARATE_119HZ);
     imu.setupMag(imu.LSM9DS1_MAGGAIN_4GAUSS);
     imu.setupGyro(imu.LSM9DS1_GYROSCALE_245DPS);
   }
-  Serial.printf("Qwiic GPS=%s QMC=%s IMU=%s BMP280=%s\n", gpsOk ? "OK" : "ABSENT",
+  Serial.printf("Qwiic GPS=%s QMC=%s IMU=%s BARO=%s\n", gpsOk ? "OK" : "ABSENT",
                 qmcOk ? "OK" : "ABSENT",
                 imuKind == ImuKind::ICM20948 ? "ICM20948" :
                 imuKind == ImuKind::LSM9DS1 ? "LSM9DS1" :
                 imuKind == ImuKind::QMI8658 ? "QMI8658" : "ABSENT",
-                baroOk ? "OK" : "ABSENT");
+                baroKindName());
 }
 
 bool qmcWrite(uint8_t reg, uint8_t value) {
@@ -879,6 +927,7 @@ void setup() {
 void loop() {
   static uint32_t last = 0;
   static uint32_t nextCompass1SampleUs = 0;
+  static uint32_t nextBaroSampleUs = 0;
   handleSerialCommands();
   updateLoggingButton();
   updateBootLogging();
@@ -982,23 +1031,37 @@ void loop() {
     float primaryTemp = imuKind == ImuKind::QMI8658 ? qmi8658.getTemperature_C() : NAN;
     gyroDrift.update(millis(), primaryTemp, secondaryTemp);
   }
-  if (baroOk) {
-    float pressurePa = HARDWARE.kind == HalBoardKind::TBeamSupreme
-        ? bme.readPressure() : baro.readPressure();
-    float altitudeM = HARDWARE.kind == HalBoardKind::TBeamSupreme
-        ? bme.readAltitude(1013.25f) : baro.readAltitude(1013.25f);
-    uint64_t nowUs = micros();
-    bool baroSampleValid = isfinite(pressurePa) && isfinite(altitudeM) && pressurePa > 0.0f;
-    if (sessionLog.active()) sessionLog.appendBaro(nowUs, pressurePa, altitudeM, baroSampleValid);
-    ahrs.updateBaro(altitudeM, baroSampleValid, millis());
+  uint32_t baroSampleUs = micros();
+  if (baroOk && (int32_t)(baroSampleUs - nextBaroSampleUs) >= 0) {
+    nextBaroSampleUs = baroSampleUs + BARO_OUTPUT_PERIOD_US;
+    bool readOk = true;
+    float pressurePa;
+    if (baroKind == BaroKind::BME280) pressurePa = bme.readPressure();
+    else if (baroKind == BaroKind::BMP280) pressurePa = baro.readPressure();
+    else {
+      readOk = bmp3.performReading();
+      pressurePa = readOk ? (float)bmp3.pressure : NAN;
+    }
+    float altitudeM = 44330.0f *
+        (1.0f - powf(pressurePa / 101325.0f, 0.19029496f));
+    bool settled = baroReadyAfterMs == 0 ||
+                   (int32_t)(millis() - baroReadyAfterMs) >= 0;
+    bool valid = settled && readOk && isfinite(pressurePa) &&
+                 isfinite(altitudeM) && pressurePa > 0.0f;
+    if (valid) {
+      latestBaroPressurePa = pressurePa;
+      latestBaroAltitudeM = altitudeM;
+    }
+    if (sessionLog.active()) sessionLog.appendBaro(
+        baroSampleUs, pressurePa, altitudeM, valid);
+    ahrs.updateBaro(altitudeM, valid, millis());
   }
   if (millis() - last >= 1000) {
     last = millis();
     char packet[128];
     float pressure = 0.0f;
     if (baroOk) {
-      pressure = (HARDWARE.kind == HalBoardKind::TBeamSupreme
-          ? bme.readPressure() : baro.readPressure()) / 100.0f;
+      pressure = latestBaroPressurePa / 100.0f;
     }
     snprintf(packet, sizeof(packet), "%s TEST=1 MILLIS=%lu LCD=%s SD=%s GPS=%s QMC=%s IMU=%s BARO=%s P=%.1f\n",
              HARDWARE.name, (unsigned long)last, displayOk ? "OK" : "FAIL", sdOk ? "OK" : "ABSENT",

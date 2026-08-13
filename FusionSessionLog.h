@@ -94,7 +94,7 @@ private:
         if (storage_->exists(fileName_)) return false;
         file_ = storage_->open(fileName_, FILE_WRITE);
         if (!file_) return false;
-        sequence_ = 0;
+        sequence_ = dropped_ = written_ = writeErrors_ = 0;
         queue_ = xQueueCreate(QueueDepth, sizeof(QueueItem));
         if (!queue_) { file_.close(); return false; }
         active_ = true;
@@ -110,7 +110,7 @@ public:
         if (!active_) return;
         event("STOP");
         active_ = false;
-        uint32_t deadline = millis() + 2000;
+        uint32_t deadline = millis() + 10000;
         while (task_ && (int32_t)(deadline - millis()) > 0) delay(5);
         if (task_) { vTaskDelete(task_); task_ = nullptr; }
         if (file_) { file_.flush(); file_.close(); }

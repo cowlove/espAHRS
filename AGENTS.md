@@ -9,7 +9,7 @@ resources, and the `ReliableStreamESPNow("GEEK")` broadcast channel at 1 Hz.
 
 An external BerryIMUv3 can be connected to the I2C header. The sketch probes
 its LSM6DSL accelerometer/gyro at 0x6A, LIS3MDL magnetometer at 0x1C, and
-BMP280 at 0x76 or 0x77, then includes sensor health and pressure in the 1 Hz report. The
+BMP388 at 0x77, then includes sensor health and pressure in the 1 Hz report. The
 board is external; it is not an onboard peripheral.
 
 All external sensors are optional. I2C has a 20 ms transaction timeout and

@@ -117,6 +117,14 @@ sources are available. GPIO0 toggles logging and the Geek board's microSD uses
 the documented HSPI wiring: SCK GPIO36, MISO GPIO37, MOSI GPIO35, and CS
 GPIO34.
 
+The external BerryIMUv3 barometer is a BMP388 at I2C address `0x77`. It uses
+the maintained Adafruit BMP3XX driver with 2x temperature oversampling, 4x
+pressure oversampling, coefficient-3 IIR filtering, and a 25 Hz output/log
+schedule. Its brief reset transient is logged with `valid=0` and excluded from
+the live altitude/climb solution. The verified full-system capture delivered
+18.3 Hz; blocking compensated conversions and the other sensor work account
+for the difference from the configured sensor ODR.
+
 IMU calibration is indexed by the stable log source ID (`IMU0` through
 `IMU3`). Each source has independent accelerometer and gyro axis-remap
 matrices, gyro bias/polarity, accelerometer bias, and fine pitch/roll/yaw
