@@ -120,6 +120,11 @@ sources are available. GPIO0 toggles logging and the Geek board's microSD uses
 the documented HSPI wiring: SCK GPIO36, MISO GPIO37, MOSI GPIO35, and CS
 GPIO34.
 
+New files use `G<MAC4><sequence>.bin`, for example `G247C001.bin`. The
+zero-padded sequence is reserved in ESP32 NVS before file creation and keeps
+increasing across reboots, firmware updates, SD formatting, and card swaps.
+Legacy `fusion-*.bin` files remain listable and downloadable.
+
 The external BerryIMUv3 barometer is a BMP388 at I2C address `0x77`. It uses
 the maintained Adafruit BMP3XX driver with 2x temperature oversampling, 4x
 pressure oversampling, coefficient-3 IIR filtering, and a 25 Hz output/log

@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <FS.h>
 #include <SD.h>
+#include <Preferences.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/task.h"
@@ -23,6 +24,25 @@ class FusionSessionLog {
     uint32_t startedMs_ = 0;
     portMUX_TYPE producerMux_ = portMUX_INITIALIZER_UNLOCKED;
     char fileName_[32] = {};
+    char identityPrefix_[6] = {};
+    char counterKey_[14] = {};
+
+    static bool isHex(char c) {
+        return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') ||
+               (c >= 'a' && c <= 'f');
+    }
+    bool parseCurrentSequence(const char *name, uint32_t &number) const {
+        const char *base = name && name[0] == '/' ? name + 1 : name;
+        if (!base || !identityPrefix_[0] || strncmp(base, identityPrefix_, 5) != 0)
+            return false;
+        const char *digits = base + 5;
+        if (!isdigit(*digits)) return false;
+        char *end = nullptr;
+        unsigned long parsed = strtoul(digits, &end, 10);
+        if (!end || strcmp(end, ".bin") != 0 || parsed > UINT32_MAX) return false;
+        number = static_cast<uint32_t>(parsed);
+        return true;
+    }
 
     static void taskEntry(void *arg) { static_cast<FusionSessionLog *>(arg)->writerLoop(); }
     void writerLoop() {
@@ -47,24 +67,50 @@ class FusionSessionLog {
     void event(const char *s) { append(FUSION_LOG_EVENT, micros(), s, strlen(s)); }
 
 public:
+    void configureIdentity(char hal, const uint8_t mac[6]) {
+        snprintf(identityPrefix_, sizeof(identityPrefix_), "%c%02X%02X",
+                 hal, mac[4], mac[5]);
+        snprintf(counterKey_, sizeof(counterKey_), "n%02X%02X%02X%02X%02X%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    }
+    static bool isLogFileName(const char *name) {
+        const char *base = name && name[0] == '/' ? name + 1 : name;
+        if (!base || strchr(base, '/') || strchr(base, '\\')) return false;
+        unsigned legacy = 0; char suffix = 0;
+        if (sscanf(base, "fusion-%u.bin%c", &legacy, &suffix) == 1) return true;
+        size_t length = strlen(base);
+        if (length < 10 || (base[0] != 'G' && base[0] != 'T') ||
+            strcmp(base + length - 4, ".bin") != 0) return false;
+        for (size_t i = 1; i < 5; ++i) if (!isHex(base[i])) return false;
+        for (size_t i = 5; i < length - 4; ++i) if (!isdigit(base[i])) return false;
+        return length > 9;
+    }
     bool recoverLatest(FS &storage) {
-        storage_ = &storage; unsigned latest = 0; bool found = false; char path[32] = {};
+        storage_ = &storage; uint32_t latest = 0; unsigned legacyLatest = 0;
+        bool found = false, legacyFound = false; char path[32] = {}, legacyPath[32] = {};
         File root = storage.open("/"); if (!root) return false; File entry;
         while ((entry = root.openNextFile())) {
             if (!entry.isDirectory()) {
                 unsigned n = 0; char suffix = 0; const char *name = entry.name();
-                if ((sscanf(name, "/fusion-%u.bin%c", &n, &suffix) == 1 ||
-                     sscanf(name, "fusion-%u.bin%c", &n, &suffix) == 1) && (!found || n > latest)) {
+                uint32_t current = 0;
+                if (parseCurrentSequence(name, current) && (!found || current > latest)) {
                     if (name[0] == '/') strncpy(path, name, sizeof(path) - 1);
                     else snprintf(path, sizeof(path), "/%s", name);
-                    latest = n; found = true;
+                    latest = current; found = true;
+                } else if ((sscanf(name, "/fusion-%u.bin%c", &n, &suffix) == 1 ||
+                            sscanf(name, "fusion-%u.bin%c", &n, &suffix) == 1) &&
+                           (!legacyFound || n > legacyLatest)) {
+                    if (name[0] == '/') strncpy(legacyPath, name, sizeof(legacyPath) - 1);
+                    else snprintf(legacyPath, sizeof(legacyPath), "/%s", name);
+                    legacyLatest = n; legacyFound = true;
                 }
             }
             entry.close();
         }
         root.close();
         if (found) strncpy(fileName_, path, sizeof(fileName_) - 1);
-        return found;
+        else if (legacyFound) strncpy(fileName_, legacyPath, sizeof(fileName_) - 1);
+        return found || legacyFound;
     }
     bool begin(uint8_t cs, const char *prefix = "/fusion-") {
         storage_ = &SD; if (!SD.begin(cs)) return false; return beginMounted(prefix);
@@ -75,24 +121,24 @@ public:
 
 private:
     bool beginMounted(const char *prefix) {
-        unsigned next = 0;
-        File root = storage_->open("/");
-        if (root) {
-            File entry;
-            while ((entry = root.openNextFile())) {
-                if (!entry.isDirectory()) {
-                    unsigned number = 0; char suffix = 0; const char *name = entry.name();
-                    if ((sscanf(name, "/fusion-%u.bin%c", &number, &suffix) == 1 ||
-                         sscanf(name, "fusion-%u.bin%c", &number, &suffix) == 1) &&
-                        number < 10000 && number >= next) next = number + 1;
-                }
-                entry.close();
-            }
-            root.close();
+        if (!identityPrefix_[0] || !counterKey_[0]) return false;
+        (void)prefix;
+        Preferences preferences;
+        if (!preferences.begin("espahrs-log", false)) return false;
+        uint32_t next = preferences.getUInt(counterKey_, 1);
+        do {
+            snprintf(fileName_, sizeof(fileName_), "/%s%03lu.bin",
+                     identityPrefix_, (unsigned long)next);
+            if (!storage_->exists(fileName_)) break;
+            if (next == UINT32_MAX) { preferences.end(); return false; }
+            ++next;
+        } while (true);
+        // Reserve the number before file creation. A failed creation may
+        // leave a gap, but a number can never be reused after a reset.
+        if (next == UINT32_MAX || preferences.putUInt(counterKey_, next + 1) != sizeof(uint32_t)) {
+            preferences.end(); return false;
         }
-        if (next >= 10000) return false;
-        snprintf(fileName_, sizeof(fileName_), "%s%04u.bin", prefix, next);
-        if (storage_->exists(fileName_)) return false;
+        preferences.end();
         file_ = storage_->open(fileName_, FILE_WRITE);
         if (!file_) return false;
         sequence_ = dropped_ = written_ = writeErrors_ = 0;
@@ -129,7 +175,7 @@ public:
     bool selectFile(const char *requested) {
         if (!requested || !*requested) return false;
         const char *base = requested[0] == '/' ? requested + 1 : requested;
-        if (strncmp(base, "fusion-", 7) != 0 || !strstr(base, ".bin") || strchr(base, '/') || strchr(base, '\\')) return false;
+        if (!isLogFileName(base)) return false;
         char path[32]; snprintf(path, sizeof(path), "/%s", base);
         File f = storage_->open(path, FILE_READ); if (!f) return false;
         f.close(); strncpy(fileName_, path, sizeof(fileName_) - 1); fileName_[sizeof(fileName_) - 1] = 0; return true;

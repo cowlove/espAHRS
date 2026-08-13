@@ -1,7 +1,7 @@
-# Board identity and log naming plan
+# Board identity and log naming
 
-This is a forward-looking design note. It is intentionally not part of the
-current flight firmware or today's downloaded data.
+The filename and persistent sequence portions of this design are implemented.
+The richer board-profile and log-metadata portions remain future work.
 
 ## Identity
 
@@ -13,21 +13,21 @@ four-digit suffix is only a compact human-facing identifier.
 
 ## Log filename
 
-New log files should use `<HAL><MAC4><NNN>.bin`: `G` for GEEK, `T` for T-Beam,
+New log files use `<HAL><MAC4><NNN>.bin`: `G` for GEEK,
 `MAC4` as uppercase least-significant MAC digits, and `NNN` as a zero-padded
-per-board sequence. Examples: `G247C001.bin`, `TCCB8007.bin`.
+per-board sequence. Example: `G247C001.bin`.
 
 The HAL flavor identifies base hardware and driver selection, not calibration.
 
 ## Persistent sequence number
 
-The counter must live outside the SD card so it survives SD swaps, formatting,
-and replacement. Preferred storage is an NVS/Preferences record in on-chip
-flash; SPIFFS/LittleFS is acceptable if required by project conventions.
+The counter lives in an NVS/Preferences record in on-chip flash so it survives
+SD swaps, formatting, replacement, and firmware updates.
 
-Key it by the full board MAC, increment transactionally before creating a log,
-and never derive it by scanning the SD card. After `999`, continue with decimal
-sequence values; parsers must not assume exactly three digits.
+It is keyed by the full board MAC and reserved before creating a log. A failed
+creation can leave a harmless gap, but a number is never reused. After `999`,
+the decimal sequence grows naturally; parsers do not assume exactly three
+digits.
 
 ## Calibration ownership
 
@@ -43,15 +43,14 @@ use an explicit legacy-profile option rather than silent guessing.
 
 ## Migration and compatibility
 
-- Continue reading current `fusion-*.bin` names and record format.
-- Add metadata at log start before switching to new names.
+- Continue reading legacy `fusion-*.bin` names and the existing record format.
+- Add board/profile metadata to the log start event in a future format update.
 - Preserve an import/rename path for old files; do not infer board identity
   from filenames alone.
 - Keep LIST/DUMP filename handling opaque and validated, not tied to a fixed
   `fusion-####.bin` pattern.
 
-## Bookmark
+## Remaining work
 
-Before implementation, settle the exact MAC source, NVS namespace and atomic
-update strategy, board-profile schema, metadata record ABI, and legacy replay
-override. The current T-Beam flight batch is intentionally unchanged.
+The board-profile schema, metadata record ABI, calibration revision, and
+legacy replay override are not yet implemented.

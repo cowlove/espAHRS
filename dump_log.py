@@ -58,7 +58,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default="/dev/ttyACM0")
     ap.add_argument("--output", default="downloaded-fusion-log.bin")
-    ap.add_argument("--file", help="specific SD filename, e.g. /fusion-1234.bin")
+    ap.add_argument("--file", help="specific SD filename, e.g. G247C001.bin")
     ap.add_argument("--timeout", type=float, default=300.0,
                     help="overall transfer timeout in seconds")
     ap.add_argument("--trace", help="write protocol trace lines to this file")

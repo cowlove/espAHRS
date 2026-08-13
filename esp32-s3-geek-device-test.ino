@@ -2,6 +2,7 @@
 #include <esp_heap_caps.h>
 #include <WiFi.h>
 #include <ArduinoOTA.h>
+#include <esp_mac.h>
 #include <math.h>
 #include <Arduino_CRC32.h>
 #include <WiFiUdp.h>
@@ -361,6 +362,9 @@ void halUpdateDisplay(const HalDisplayStatus &status) {
 
 void setupStorage() {
   if (!HARDWARE.hasSd) return;
+  uint8_t mac[6]{};
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  sessionLog.configureIdentity('G', mac);
   sdSpi.begin(HARDWARE.sdSck, HARDWARE.sdMiso, HARDWARE.sdMosi);
   sdOk = SD.begin(HARDWARE.sdCs, sdSpi, 20000000);
   if (sdOk) sessionLog.recoverLatest(SD);
@@ -375,7 +379,7 @@ bool clearFusionLogs() {
   while ((entry = root.openNextFile())) {
     if (!entry.isDirectory()) {
       String name = entry.name();
-      if (name.endsWith(".bin") && name.indexOf("fusion-") >= 0) {
+      if (FusionSessionLog::isLogFileName(name.c_str())) {
         String path = name.startsWith("/") ? name : "/" + name;
         if (!SD.remove(path)) ok = false;
       }
@@ -492,7 +496,7 @@ void listFusionLogs() {
   File entry;
   while ((entry = root.openNextFile())) {
     const char *name = entry.name();
-    if (!entry.isDirectory() && name && strstr(name, "fusion-") && strstr(name, ".bin")) {
+    if (!entry.isDirectory() && name && FusionSessionLog::isLogFileName(name)) {
       Serial.printf("LOG_LIST_FILE name=%s size=%lu\n", name, (unsigned long)entry.size());
       ++count;
     }
