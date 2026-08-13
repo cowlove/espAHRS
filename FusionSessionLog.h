@@ -123,6 +123,16 @@ public:
         return (uint32_t)(remainingRecords / recordsPerSecond);
     }
     const char *fileName() const { return fileName_; }
+    bool selectFile(const char *requested) {
+        if (!requested || !*requested) return false;
+        const char *base = requested[0] == '/' ? requested + 1 : requested;
+        if (strncmp(base, "fusion-", 7) != 0 || !strstr(base, ".bin") || strchr(base, '/') || strchr(base, '\\')) return false;
+        char path[32]; snprintf(path, sizeof(path), "/%s", base);
+        File f = storage_->open(path, FILE_READ);
+        if (!f) return false;
+        f.close(); strncpy(fileName_, path, sizeof(fileName_) - 1); fileName_[sizeof(fileName_) - 1] = 0;
+        return true;
+    }
     size_t fileSize() const { File f = storage_->open(fileName_, FILE_READ); if (!f) return 0; size_t n=f.size(); f.close(); return n; }
     File openRead() const { return storage_->open(fileName_, FILE_READ); }
     bool append(FusionLogType type, uint64_t t, const void *p, uint32_t n) {

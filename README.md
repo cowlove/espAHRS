@@ -8,6 +8,9 @@ For the proposed standalone DipAHRS package scope and algorithm design, see
 For the literature and public-code background of the magnetic-vector roll
 observer, see [MAGNETIC_ROLL_PRIOR_ART.md](MAGNETIC_ROLL_PRIOR_ART.md).
 
+The planned board-identity, per-device calibration, and persistent log naming
+scheme is documented in [LOGGING_IDENTITY_PLAN.md](LOGGING_IDENTITY_PLAN.md).
+
 Bring-up project for the ESP32-S3 Geek board (Amazon ASIN B0CR6FV3QC).
 The test initializes the 1.14-inch LCD, probes the TF/microSD slot, reports
 ESP32 flash/PSRAM, and sends a `ReliableStreamESPNow("GEEK")` diagnostic once

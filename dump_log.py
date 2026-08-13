@@ -58,6 +58,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default="/dev/ttyACM0")
     ap.add_argument("--output", default="downloaded-fusion-log.bin")
+    ap.add_argument("--file", help="specific SD filename, e.g. /fusion-1234.bin")
     ap.add_argument("--timeout", type=float, default=300.0,
                     help="overall transfer timeout in seconds")
     ap.add_argument("--trace", help="write protocol trace lines to this file")
@@ -88,7 +89,10 @@ def main() -> int:
                 trace = open(args.trace, "a") if args.trace else None
                 def log(direction, data):
                     if trace: trace.write(f"{direction} {data!r}\n"); trace.flush()
-                command = f"DUMP {seq}\n".encode() if seq else b"DUMP\n"
+                if args.file:
+                    command = f"DUMP {args.file} {seq}\n".encode() if seq else f"DUMP {args.file}\n".encode()
+                else:
+                    command = f"DUMP {seq}\n".encode() if seq else b"DUMP\n"
                 ser.write(command); ser.flush(); log("TX", command)
                 line = read_protocol_line(ser, b"LOG_CHUNK_BEGIN ",
                                           min(overall_deadline, time.monotonic() + 10.0))

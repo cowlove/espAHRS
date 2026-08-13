@@ -87,15 +87,32 @@ static void rotateVector(const float m[3][3], float &x, float &y, float &z) {
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s session.bin [--param name=value] [--roll-csv FILE] [--pitch-csv FILE] [--imu-csv FILE] [--list-params]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s session.bin [--hal geek|tbeam] [--axis-remap 9 values] [--param name=value] [--roll-csv FILE] [--pitch-csv FILE] [--imu-csv FILE] [--list-params]\n", argv[0]);
         return 2;
     }
     ReplayConfig replayConfig;
+    enum class ReplayHal { Geek, TBeam } replayHal = ReplayHal::Geek;
+    bool axisRemapOverride = false;
+    float axisRemap[3][3]{};
     std::FILE *rollCsv = nullptr;
     std::FILE *pitchCsv = nullptr;
     std::FILE *imuCsv = nullptr;
     for (int i = 2; i < argc; ++i) {
         if (std::strcmp(argv[i], "--list-params") == 0) { ReplayConfig::list(); return 0; }
+        if (std::strcmp(argv[i], "--hal") == 0 && i + 1 < argc) {
+            const char *name = argv[++i];
+            if (std::strcmp(name, "geek") == 0) replayHal = ReplayHal::Geek;
+            else if (std::strcmp(name, "tbeam") == 0) replayHal = ReplayHal::TBeam;
+            else { std::fprintf(stderr, "unknown HAL: %s\n", name); return 2; }
+            continue;
+        }
+        if (std::strcmp(argv[i], "--axis-remap") == 0 && i + 9 < argc) {
+            for (int row = 0; row < 3; ++row)
+                for (int column = 0; column < 3; ++column)
+                    axisRemap[row][column] = std::strtof(argv[++i], nullptr);
+            axisRemapOverride = true;
+            continue;
+        }
         if (std::strcmp(argv[i], "--roll-csv") == 0 && i + 1 < argc) {
             rollCsv = std::fopen(argv[++i], "w");
             if (!rollCsv) { std::perror("--roll-csv"); return 1; }
@@ -135,7 +152,12 @@ int main(int argc, char **argv) {
     if (!in) { std::perror(argv[1]); return 1; }
 
     AircraftAHRS ahrs(replayConfig.ahrs);
-    constexpr HalHardwareProfile hardware = makeGeekS3Profile();
+    const HalHardwareProfile hardware = replayHal == ReplayHal::TBeam
+        ? makeTBeamSupremeProfile() : makeGeekS3Profile();
+    HalHardwareProfile selectedHardware = hardware;
+    if (axisRemapOverride)
+        std::memcpy(selectedHardware.calibration.sensorAxisRemap,
+                    axisRemap, sizeof(axisRemap));
     ahrs.setCompassCalibration(0, hardware.calibration.compass[0].offset,
                                hardware.calibration.compass[0].matrix);
     ahrs.setCompassCalibration(1, hardware.calibration.compass[1].offset,
@@ -225,6 +247,10 @@ int main(int argc, char **argv) {
                 legacyAccelUnitsDetected = true;
             }
             r.accelX *= accelScale; r.accelY *= accelScale; r.accelZ *= accelScale;
+            halApplySensorAxisRemap(selectedHardware.calibration.gyroAxisRemap,
+                                    r.gyroX, r.gyroY, r.gyroZ);
+            halApplySensorAxisRemap(selectedHardware.calibration.sensorAxisRemap,
+                                    r.accelX, r.accelY, r.accelZ);
             lastRawPitchGyroDegSec = r.gyroY;
             ahrs.updateImu(r.gyroX, r.gyroY, r.gyroZ,
                             static_cast<uint32_t>(h.timestampUs),

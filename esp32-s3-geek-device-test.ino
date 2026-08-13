@@ -401,10 +401,32 @@ bool readSerialLine(String &line, uint32_t timeoutMs) {
   return false;
 }
 
-void dumpChunked(uint32_t startSeq = 0) {
+void listFusionLogs() {
+  if (!sdOk) { Serial.println("LOG_ERROR SD_ABSENT"); return; }
+  File root = SD.open("/");
+  if (!root) { Serial.println("LOG_ERROR LIST_OPEN"); return; }
+  uint32_t count = 0;
+  Serial.println("LOG_LIST_BEGIN");
+  File entry;
+  while ((entry = root.openNextFile())) {
+    const char *name = entry.name();
+    if (!entry.isDirectory() && name && strstr(name, "fusion-") && strstr(name, ".bin")) {
+      Serial.printf("LOG_LIST_FILE name=%s size=%lu\n", name, (unsigned long)entry.size());
+      ++count;
+    }
+    entry.close();
+  }
+  root.close();
+  Serial.printf("LOG_LIST_END count=%lu\n", (unsigned long)count);
+}
+
+void dumpChunked(uint32_t startSeq = 0, const char *requestedFile = nullptr) {
   // Host-driven half-duplex plus CRC lets us use the SD/USB-friendly 4 KiB
   // payload size without returning to the unreliable unacknowledged stream.
   const uint32_t chunkSize = 4096;
+  if (requestedFile && !sessionLog.selectFile(requestedFile)) {
+    Serial.printf("LOG_ERROR FILE name=%s\n", requestedFile); return;
+  }
   File f = sessionLog.openRead();
   if (!f) {
     Serial.printf("LOG_ERROR OPEN name=%s size_probe=%lu\n", sessionLog.fileName(),
@@ -477,13 +499,27 @@ void handleSerialCommands() {
         if (sessionLog.active()) Serial.println("LOG_ERROR ACTIVE");
         else if (sdOk && clearFusionLogs()) Serial.println("SD_FORMAT OK (logs cleared)");
         else Serial.println("SD_FORMAT FAIL");
+      } else if (command.equalsIgnoreCase("LIST")) {
+        listFusionLogs();
       } else if (command.equalsIgnoreCase("DUMP") || command.startsWith("DUMP ")) {
         if (sessionLog.active()) {
           Serial.println("LOG_ERROR ACTIVE");
         } else {
           uint32_t startSeq = 0;
-          if (command.startsWith("DUMP ")) startSeq = (uint32_t)command.substring(5).toInt();
-          dumpChunked(startSeq);
+          String requestedFile;
+          if (command.startsWith("DUMP ")) {
+            String args = command.substring(5); args.trim();
+            int space = args.indexOf(' ');
+            String first = space < 0 ? args : args.substring(0, space);
+            bool numeric = first.length() > 0;
+            for (size_t i = 0; i < first.length(); ++i) numeric = numeric && isdigit(first[i]);
+            if (numeric) startSeq = (uint32_t)first.toInt();
+            else {
+              requestedFile = first;
+              if (space >= 0) startSeq = (uint32_t)args.substring(space + 1).toInt();
+            }
+          }
+          dumpChunked(startSeq, requestedFile.length() ? requestedFile.c_str() : nullptr);
         }
       } else if (command.equalsIgnoreCase("SCAN")) {
         scanI2c();
@@ -832,10 +868,16 @@ void loop() {
       gx, gy, gz, ax, ay, az, imuSampleValid);
     if (sessionLog.active()) sessionLog.appendCompass(0, nowUs,
       mx, my, mz, compass0Valid);
-    // Preserve raw values in the log and pass the same raw sensor frame into
-    // the AHRS. It applies gyro bias/polarity before the common mounting
-    // rotation, then performs aircraft-frame propagation.
-    ahrs.updateImu(gx, gy, gz, nowUs, ax, ay, az, imuSampleValid);
+    // Preserve raw values in the log. Apply the HAL's installed-sensor to
+    // aircraft-axis remap only to the values entering the AHRS.
+    float bodyGx = gx, bodyGy = gy, bodyGz = gz;
+    float bodyAx = ax, bodyAy = ay, bodyAz = az;
+    halApplySensorAxisRemap(HARDWARE.calibration.gyroAxisRemap,
+                            bodyGx, bodyGy, bodyGz);
+    halApplySensorAxisRemap(HARDWARE.calibration.sensorAxisRemap,
+                            bodyAx, bodyAy, bodyAz);
+    ahrs.updateImu(bodyGx, bodyGy, bodyGz, nowUs,
+                   bodyAx, bodyAy, bodyAz, imuSampleValid);
     ahrs.updateCompass(0, mx, my, mz, compass0Valid, millis());
   }
   if (baroOk) {

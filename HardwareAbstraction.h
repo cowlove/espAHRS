@@ -66,6 +66,10 @@ struct HalSensorCalibration {
   // after it at runtime.  Zero-initialized legacy profiles are normalized to
   // identity by setup().
   float sensorAxisRemap[3][3];
+  // Some sensor packages expose gyro axes with a different sign convention
+  // from their accelerometer axes. Keep this separate rather than forcing a
+  // physically identical matrix when the device ABI requires otherwise.
+  float gyroAxisRemap[3][3];
 
   // Index 0/1 matches AHRS compass source 0/1, not a sensor identity.
   HalCompassCalibration compass[2];
@@ -86,6 +90,14 @@ inline void halMakeSensorFrameRotation(float pitchDeg, float rollDeg, float yawD
   matrix[2][0] = -cy * cr * sp + sy * sr;
   matrix[2][1] = sy * cr * sp + cy * sr;
   matrix[2][2] = cr * cp;
+}
+
+inline void halApplySensorAxisRemap(const float matrix[3][3],
+                                    float &x, float &y, float &z) {
+  const float inX = x, inY = y, inZ = z;
+  x = matrix[0][0] * inX + matrix[0][1] * inY + matrix[0][2] * inZ;
+  y = matrix[1][0] * inX + matrix[1][1] * inY + matrix[1][2] * inZ;
+  z = matrix[2][0] * inX + matrix[2][1] * inY + matrix[2][2] * inZ;
 }
 
 inline void halRotateVector(const float matrix[3][3], float &x, float &y,
@@ -159,6 +171,11 @@ constexpr HalHardwareProfile makeGeekS3Profile() {
         {0.0f, 0.0f, 1.0f}
       },
       {
+        {1.0f, 0.0f, 0.0f},
+        {0.0f, 1.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f}
+      },
+      {
         // Per-compass axis alignment fitted from the motion-alignment session
         // after ellipsoid correction.  The common mounting pitch/roll is
         // deliberately excluded and applied later to every sensor stream.
@@ -216,7 +233,7 @@ constexpr HalHardwareProfile makeTBeamSupremeProfile() {
   // Calibration is intentionally neutral until this physical sample is
   // mounted and measured.  Do not reuse the GEEK's flight calibration.
   p.calibration.sensorPitchOffsetDeg = 0.0f;
-  p.calibration.sensorRollOffsetDeg = 0.0f;
+  p.calibration.sensorRollOffsetDeg = -4.0f;
   p.calibration.sensorYawOffsetDeg = 0.0f;
   p.calibration.gyroBiasDegSec[0] = 0.0f;
   p.calibration.gyroBiasDegSec[1] = 0.0f;
@@ -227,15 +244,24 @@ constexpr HalHardwareProfile makeTBeamSupremeProfile() {
   p.calibration.applyAccelBias = false;
   // In the aircraft installation, the QMI sweep identified the installed
   // sensor axes as: aircraft nose=+QMI X, right=+QMI Z, down=+QMI Y.
-  p.calibration.sensorAxisRemap[0][0] = 1.0f;
+  p.calibration.sensorAxisRemap[0][0] = -1.0f;
   p.calibration.sensorAxisRemap[0][1] = 0.0f;
   p.calibration.sensorAxisRemap[0][2] = 0.0f;
   p.calibration.sensorAxisRemap[1][0] = 0.0f;
   p.calibration.sensorAxisRemap[1][1] = 0.0f;
-  p.calibration.sensorAxisRemap[1][2] = 1.0f;
+  p.calibration.sensorAxisRemap[1][2] = -1.0f;
   p.calibration.sensorAxisRemap[2][0] = 0.0f;
   p.calibration.sensorAxisRemap[2][1] = 1.0f;
   p.calibration.sensorAxisRemap[2][2] = 0.0f;
+  p.calibration.gyroAxisRemap[0][0] = 1.0f;
+  p.calibration.gyroAxisRemap[0][1] = 0.0f;
+  p.calibration.gyroAxisRemap[0][2] = 0.0f;
+  p.calibration.gyroAxisRemap[1][0] = 0.0f;
+  p.calibration.gyroAxisRemap[1][1] = 0.0f;
+  p.calibration.gyroAxisRemap[1][2] = 1.0f;
+  p.calibration.gyroAxisRemap[2][0] = 0.0f;
+  p.calibration.gyroAxisRemap[2][1] = -1.0f;
+  p.calibration.gyroAxisRemap[2][2] = 0.0f;
   for (int compass = 0; compass < 2; ++compass) {
     for (int axis = 0; axis < 3; ++axis) {
       p.calibration.compass[compass].offset[axis] = 0.0f;
