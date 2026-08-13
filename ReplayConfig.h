@@ -11,6 +11,7 @@
 // --param name=value arguments without teaching the replay loop about each
 // individual AHRS subsystem.
 struct ReplayConfig {
+    const HalHardwareProfile *hardware = nullptr;
     AircraftAHRS::Config ahrs;
     float g5HeadingOffsetDeg = 0.0f;
     // Added to raw G5 pitch before comparisons/CSV output.  This normalizes a
@@ -30,8 +31,10 @@ struct ReplayConfig {
     float rawGyroBiasDegSec[3] = {0.0f, 0.0f, 0.0f};
     float rawGyroAxisSign[3] = {1.0f, 1.0f, 1.0f};
 
-    explicit ReplayConfig(const HalHardwareProfile &hardware) {
-        const HalSensorCalibration &calibration = hardware.calibration;
+    explicit ReplayConfig(const HalHardwareProfile &profile) : hardware(&profile) {
+        applyImuCalibration(profile.calibration.imu[0]);
+    }
+    void applyImuCalibration(const HalImuCalibration &calibration) {
         sensorPitchOffsetDeg = calibration.sensorPitchOffsetDeg;
         sensorRollOffsetDeg = calibration.sensorRollOffsetDeg;
         sensorYawOffsetDeg = calibration.sensorYawOffsetDeg;
@@ -43,6 +46,10 @@ struct ReplayConfig {
             ahrs.accelBiasXMps2 = calibration.accelBiasMps2[0];
             ahrs.accelBiasYMps2 = calibration.accelBiasMps2[1];
             ahrs.accelBiasZMps2 = calibration.accelBiasMps2[2];
+        } else {
+            ahrs.accelBiasXMps2 = 0.0f;
+            ahrs.accelBiasYMps2 = 0.0f;
+            ahrs.accelBiasZMps2 = 0.0f;
         }
     }
 
@@ -122,7 +129,9 @@ struct ReplayConfig {
             accelInputScale = value; return true;
         }
         if (std::strcmp(name, "imu_source") == 0 && value >= 0.0f && value < 4.0f) {
-            selectedImuSource = static_cast<uint8_t>(value); return true;
+            selectedImuSource = static_cast<uint8_t>(value);
+            if (hardware) applyImuCalibration(hardware->calibration.imu[selectedImuSource]);
+            return true;
         }
         if (std::strcmp(name, "compass_source") == 0 && value >= 0.0f && value < 4.0f) {
             selectedCompassSource = static_cast<uint8_t>(value); return true;

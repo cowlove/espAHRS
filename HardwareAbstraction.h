@@ -46,7 +46,7 @@ struct HalCompassCalibration {
   float frameRotation[3][3];
 };
 
-struct HalSensorCalibration {
+struct HalImuCalibration {
   // Rotation from the installed sensor frame into the aircraft frame.
   float sensorPitchOffsetDeg;
   float sensorRollOffsetDeg;
@@ -71,9 +71,26 @@ struct HalSensorCalibration {
   // physically identical matrix when the device ABI requires otherwise.
   float gyroAxisRemap[3][3];
 
-  // Index 0/1 matches AHRS compass source 0/1, not a sensor identity.
+};
+
+struct HalSensorCalibration {
+  // Index matches the stable IMU source ID carried in the binary log.
+  HalImuCalibration imu[4];
+  // Index 0/1 matches AHRS compass source 0/1, not an IMU source.
   HalCompassCalibration compass[2];
 };
+
+constexpr HalImuCalibration halIdentityImuCalibration() {
+  return {
+    0.0f, 0.0f, 0.0f,
+    {0.0f, 0.0f, 0.0f},
+    {1.0f, 1.0f, 1.0f},
+    {0.0f, 0.0f, 0.0f},
+    false,
+    {{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+    {{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}}
+  };
+}
 
 inline void halMakeSensorFrameRotation(float pitchDeg, float rollDeg, float yawDeg,
                                        float matrix[3][3]) {
@@ -100,7 +117,7 @@ inline void halApplySensorAxisRemap(const float matrix[3][3],
   z = matrix[2][0] * inX + matrix[2][1] * inY + matrix[2][2] * inZ;
 }
 
-inline void halApplyRawGyroCalibration(const HalSensorCalibration &calibration,
+inline void halApplyRawGyroCalibration(const HalImuCalibration &calibration,
                                        float &x, float &y, float &z) {
   x = (x - calibration.gyroBiasDegSec[0]) * calibration.gyroAxisSign[0];
   y = (y - calibration.gyroBiasDegSec[1]) * calibration.gyroAxisSign[1];
@@ -167,20 +184,30 @@ constexpr HalHardwareProfile makeGeekS3Profile() {
     HalDisplayKind::GeekS3_ST7789,
     true, true,
     {
-      10.3f, 7.5f, 0.0f,
-      {-0.48f, 0.05f, 0.16f},
-      {1.0f, -1.0f, -1.0f},
-      {-0.002f, -0.019f, 0.222f},
-      false,
       {
-        {1.0f, 0.0f, 0.0f},
-        {0.0f, 1.0f, 0.0f},
-        {0.0f, 0.0f, 1.0f}
-      },
-      {
-        {1.0f, 0.0f, 0.0f},
-        {0.0f, 1.0f, 0.0f},
-        {0.0f, 0.0f, 1.0f}
+        {
+          10.3f, 7.5f, 0.0f,
+          {-0.48f, 0.05f, 0.16f},
+          {1.0f, -1.0f, -1.0f},
+          {-0.002f, -0.019f, 0.222f},
+          false,
+          {{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+          {{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}}
+        },
+        // Current BerryIMUv3 installation.  The motion calibration log shows
+        // that its gyro is already in body polarity, while its accelerometer
+        // Y/Z axes need inversion to match IMU0.  Keep the same fine board
+        // alignment until a per-device fit replaces it.
+        {
+          10.3f, 7.5f, 0.0f,
+          {0.0f, 0.0f, 0.0f},
+          {1.0f, 1.0f, 1.0f},
+          {0.0f, 0.0f, 0.0f},
+          false,
+          {{1.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f, -1.0f}},
+          {{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}}
+        },
+        halIdentityImuCalibration(), halIdentityImuCalibration()
       },
       {
         // Per-compass axis alignment fitted from the motion-alignment session
@@ -237,40 +264,43 @@ constexpr HalHardwareProfile makeTBeamSupremeProfile() {
   p.gpsUartIndex = 1;
   p.display = HalDisplayKind::TBeamSupreme_SH1106;
   p.hasSd = true; p.hasLogButton = true;
+  p.calibration.imu[1] = halIdentityImuCalibration();
+  p.calibration.imu[2] = halIdentityImuCalibration();
+  p.calibration.imu[3] = halIdentityImuCalibration();
   // Calibration for this mounted physical sample.  Keep it independent of
   // the GEEK profile and apply raw gyro biases before the axis remap.
-  p.calibration.sensorPitchOffsetDeg = 3.70f;
-  p.calibration.sensorRollOffsetDeg = -3.52f;
-  p.calibration.sensorYawOffsetDeg = 0.0f;
+  p.calibration.imu[0].sensorPitchOffsetDeg = 3.70f;
+  p.calibration.imu[0].sensorRollOffsetDeg = -3.52f;
+  p.calibration.imu[0].sensorYawOffsetDeg = 0.0f;
   // Raw QMI8658 sensor-axis zero-rate offsets, applied before the installed
   // sensor-to-aircraft remap.
-  p.calibration.gyroBiasDegSec[0] = 3.92f;
-  p.calibration.gyroBiasDegSec[1] = 0.12f;
-  p.calibration.gyroBiasDegSec[2] = -0.58f;
-  p.calibration.gyroAxisSign[0] = 1.0f;
-  p.calibration.gyroAxisSign[1] = 1.0f;
-  p.calibration.gyroAxisSign[2] = 1.0f;
-  p.calibration.applyAccelBias = false;
+  p.calibration.imu[0].gyroBiasDegSec[0] = 3.92f;
+  p.calibration.imu[0].gyroBiasDegSec[1] = 0.12f;
+  p.calibration.imu[0].gyroBiasDegSec[2] = -0.58f;
+  p.calibration.imu[0].gyroAxisSign[0] = 1.0f;
+  p.calibration.imu[0].gyroAxisSign[1] = 1.0f;
+  p.calibration.imu[0].gyroAxisSign[2] = 1.0f;
+  p.calibration.imu[0].applyAccelBias = false;
   // In the aircraft installation, the QMI sweep identified the installed
   // sensor axes as: aircraft nose=+QMI X, right=+QMI Z, down=+QMI Y.
-  p.calibration.sensorAxisRemap[0][0] = -1.0f;
-  p.calibration.sensorAxisRemap[0][1] = 0.0f;
-  p.calibration.sensorAxisRemap[0][2] = 0.0f;
-  p.calibration.sensorAxisRemap[1][0] = 0.0f;
-  p.calibration.sensorAxisRemap[1][1] = 0.0f;
-  p.calibration.sensorAxisRemap[1][2] = -1.0f;
-  p.calibration.sensorAxisRemap[2][0] = 0.0f;
-  p.calibration.sensorAxisRemap[2][1] = 1.0f;
-  p.calibration.sensorAxisRemap[2][2] = 0.0f;
-  p.calibration.gyroAxisRemap[0][0] = 1.0f;
-  p.calibration.gyroAxisRemap[0][1] = 0.0f;
-  p.calibration.gyroAxisRemap[0][2] = 0.0f;
-  p.calibration.gyroAxisRemap[1][0] = 0.0f;
-  p.calibration.gyroAxisRemap[1][1] = 0.0f;
-  p.calibration.gyroAxisRemap[1][2] = 1.0f;
-  p.calibration.gyroAxisRemap[2][0] = 0.0f;
-  p.calibration.gyroAxisRemap[2][1] = -1.0f;
-  p.calibration.gyroAxisRemap[2][2] = 0.0f;
+  p.calibration.imu[0].sensorAxisRemap[0][0] = -1.0f;
+  p.calibration.imu[0].sensorAxisRemap[0][1] = 0.0f;
+  p.calibration.imu[0].sensorAxisRemap[0][2] = 0.0f;
+  p.calibration.imu[0].sensorAxisRemap[1][0] = 0.0f;
+  p.calibration.imu[0].sensorAxisRemap[1][1] = 0.0f;
+  p.calibration.imu[0].sensorAxisRemap[1][2] = -1.0f;
+  p.calibration.imu[0].sensorAxisRemap[2][0] = 0.0f;
+  p.calibration.imu[0].sensorAxisRemap[2][1] = 1.0f;
+  p.calibration.imu[0].sensorAxisRemap[2][2] = 0.0f;
+  p.calibration.imu[0].gyroAxisRemap[0][0] = 1.0f;
+  p.calibration.imu[0].gyroAxisRemap[0][1] = 0.0f;
+  p.calibration.imu[0].gyroAxisRemap[0][2] = 0.0f;
+  p.calibration.imu[0].gyroAxisRemap[1][0] = 0.0f;
+  p.calibration.imu[0].gyroAxisRemap[1][1] = 0.0f;
+  p.calibration.imu[0].gyroAxisRemap[1][2] = 1.0f;
+  p.calibration.imu[0].gyroAxisRemap[2][0] = 0.0f;
+  p.calibration.imu[0].gyroAxisRemap[2][1] = -1.0f;
+  p.calibration.imu[0].gyroAxisRemap[2][2] = 0.0f;
   for (int compass = 0; compass < 2; ++compass) {
     for (int axis = 0; axis < 3; ++axis) {
       p.calibration.compass[compass].offset[axis] = 0.0f;

@@ -176,10 +176,10 @@ int main(int argc, char **argv) {
     AircraftAHRS ahrs(replayConfig.ahrs);
     HalHardwareProfile selectedHardware = hardware;
     if (axisRemapOverride)
-        std::memcpy(selectedHardware.calibration.sensorAxisRemap,
+        std::memcpy(selectedHardware.calibration.imu[replayConfig.selectedImuSource].sensorAxisRemap,
                     axisRemap, sizeof(axisRemap));
     if (gyroAxisRemapOverride)
-        std::memcpy(selectedHardware.calibration.gyroAxisRemap,
+        std::memcpy(selectedHardware.calibration.imu[replayConfig.selectedImuSource].gyroAxisRemap,
                     gyroAxisRemap, sizeof(gyroAxisRemap));
     ahrs.setCompassCalibration(0, hardware.calibration.compass[0].offset,
                                hardware.calibration.compass[0].matrix);
@@ -276,9 +276,11 @@ int main(int argc, char **argv) {
                       replayConfig.rawGyroAxisSign[1];
             r.gyroZ = (r.gyroZ - replayConfig.rawGyroBiasDegSec[2]) *
                       replayConfig.rawGyroAxisSign[2];
-            halApplySensorAxisRemap(selectedHardware.calibration.gyroAxisRemap,
+            const HalImuCalibration &imuCalibration =
+                selectedHardware.calibration.imu[replayConfig.selectedImuSource];
+            halApplySensorAxisRemap(imuCalibration.gyroAxisRemap,
                                     r.gyroX, r.gyroY, r.gyroZ);
-            halApplySensorAxisRemap(selectedHardware.calibration.sensorAxisRemap,
+            halApplySensorAxisRemap(imuCalibration.sensorAxisRemap,
                                     r.accelX, r.accelY, r.accelZ);
             lastRawPitchGyroDegSec = r.gyroY;
             ahrs.updateImu(r.gyroX, r.gyroY, r.gyroZ,

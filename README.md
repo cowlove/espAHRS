@@ -1,4 +1,4 @@
-# ESP32-S3 Geek hardware test
+# espAHRS
 
 For the detailed reusable bring-up lessons, see [BUILD_NOTES.md](BUILD_NOTES.md).
 For the replay/AHRS parameter reference and tuning workflow, see
@@ -11,7 +11,9 @@ observer, see [MAGNETIC_ROLL_PRIOR_ART.md](MAGNETIC_ROLL_PRIOR_ART.md).
 The planned board-identity, per-device calibration, and persistent log naming
 scheme is documented in [LOGGING_IDENTITY_PLAN.md](LOGGING_IDENTITY_PLAN.md).
 
-Bring-up project for the ESP32-S3 Geek board (Amazon ASIN B0CR6FV3QC).
+The espAHRS project is the flight-oriented AHRS and sensor-logging firmware
+for the ESP32-S3 Geek board (Amazon ASIN B0CR6FV3QC). Hardware bring-up is
+complete; the board name below identifies the supported target hardware.
 The test initializes the 1.14-inch LCD, probes the TF/microSD slot, reports
 ESP32 flash/PSRAM, and sends a `ReliableStreamESPNow("GEEK")` diagnostic once
 per second.
@@ -85,11 +87,10 @@ Verified against the vendor ESP32-S3-GEEK demo sources: SCLK `12`, MOSI
 
 ## AircraftAHRS, replay, and session logging
 
-The current buffer-first logfile implementation is temporary. It captures
-records in PSRAM and pauses the runtime while flushing them to SD when logging
-stops. This accommodates the T-Beam's shared QMI/SD SPI wiring; the intended
-long-term design is a concurrent SD write stream. The ESP32-S3 PSRAM build
-configuration is permanent and is separate from this temporary logging mode.
+The logger queues records from the sensor/G5 producers and writes them
+incrementally to the SD card from a dedicated low-priority writer task. This
+keeps card-write latency out of the real-time loop without making PSRAM the
+log transport or imposing a PSRAM-sized maximum capture duration.
 
 The GEEK project contains its own copies of the fusion, logging, GPS, and
 replay sources. It no longer depends on a sibling T-Beam checkout. The
@@ -116,14 +117,18 @@ sources are available. GPIO0 toggles logging and the Geek board's microSD uses
 the documented HSPI wiring: SCK GPIO36, MISO GPIO37, MOSI GPIO35, and CS
 GPIO34.
 
-### T-Beam display logging workaround
+IMU calibration is indexed by the stable log source ID (`IMU0` through
+`IMU3`). Each source has independent accelerometer and gyro axis-remap
+matrices, gyro bias/polarity, accelerometer bias, and fine pitch/roll/yaw
+alignment. Binary logs retain raw sensor values; live fusion applies IMU0's
+calibration and replay applies the selected source's calibration. The current
+GEEK `IMU1` mapping describes the temporary BerryIMUv3 mounting measured by
+`fusion-5484.bin`.
+
+### T-Beam display updates
 
 The T-Beam SH1106 display is rendered by a low-priority application-owned
 FreeRTOS task through the board-specific HAL entry point. It uses U8g2 page
-transfers with a delay between pages. When logging starts, the task renders the
-`LOG` indication once and then freezes all display/I2C updates until logging
-stops. This is a deliberate temporary real-time safeguard: the display remains
-static during capture so its shared I2C bus cannot interfere with the sensor
-loop. Display updates resume after the log is closed. The longer-term design
-can refine the page scheduler and bus arbitration; two occasional mid-log
-timing outliers remain under investigation.
+transfers with a delay between pages and continues updating during logging.
+The sensor loop and SD writer remain higher priority; occasional display bus
+contention is therefore visible as display latency rather than a frozen panel.

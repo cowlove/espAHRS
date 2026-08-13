@@ -155,11 +155,10 @@ uint32_t discardedG5NmeaPackets = 0;
 SemaphoreHandle_t displayStatusMutex = nullptr;
 TaskHandle_t displayTaskHandle = nullptr;
 HalDisplayStatus latestDisplayStatus{};
-volatile bool displayFrozen = false;
 SharedUbloxGPS sharedGps;
 static AircraftAHRS::Config makeAhrsConfigFromHal() {
   AircraftAHRS::Config config;
-  const HalSensorCalibration &calibration = HARDWARE.calibration;
+  const HalImuCalibration &calibration = HARDWARE.calibration.imu[0];
   // Raw gyro bias and polarity belong to the sensor frame and are applied
   // immediately before gyroAxisRemap at the sample call site.  AircraftAHRS
   // therefore receives already-remapped body rates with neutral raw-axis
@@ -203,7 +202,6 @@ static void stopSessionWithSummary() {
       xSemaphoreGive(displayStatusMutex);
     }
   }
-  displayFrozen = false;
 }
 bool lastLogButton = true;
 uint32_t logButtonChangedMs = 0;
@@ -401,10 +399,6 @@ void updateLoggingButton() {
 void displayUpdateTask(void *) {
   HalDisplayStatus status{};
   for (;;) {
-    if (displayFrozen) {
-      vTaskDelay(pdMS_TO_TICKS(10));
-      continue;
-    }
     if (displayStatusMutex &&
         xSemaphoreTake(displayStatusMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
       status = latestDisplayStatus;
@@ -438,16 +432,14 @@ void updateBootLogging() {}
 
 bool startSessionLog() {
   if (!sdOk || !sessionLog.begin(SD)) return false;
-  // Show a positive button response, then freeze the panel while acquisition
-  // runs.  This avoids any OLED/I2C traffic during real-time logging.
+  // Publish the logging state; the low-priority display task continues to
+  // update the panel while the sensor and SD writer tasks run.
   if (displayStatusMutex) {
     if (xSemaphoreTake(displayStatusMutex, pdMS_TO_TICKS(20)) == pdTRUE) {
       latestDisplayStatus.logging = true;
       xSemaphoreGive(displayStatusMutex);
     }
   }
-  vTaskDelay(pdMS_TO_TICKS(150));
-  displayFrozen = true;
   return true;
 }
 
@@ -844,9 +836,9 @@ void setup() {
   // hardware variants.
   ahrs = AircraftAHRS(makeAhrsConfigFromHal());
   if (HARDWARE.hasLogButton) pinMode(HARDWARE.logButton, INPUT_PULLUP);
-  halMakeSensorFrameRotation(HARDWARE.calibration.sensorPitchOffsetDeg,
-                             HARDWARE.calibration.sensorRollOffsetDeg,
-                             HARDWARE.calibration.sensorYawOffsetDeg,
+  halMakeSensorFrameRotation(HARDWARE.calibration.imu[0].sensorPitchOffsetDeg,
+                             HARDWARE.calibration.imu[0].sensorRollOffsetDeg,
+                             HARDWARE.calibration.imu[0].sensorYawOffsetDeg,
                              sensorFrameRotation);
   ahrs.setSensorFrameRotation(sensorFrameRotation);
   ahrs.setCompassCalibration(0, HARDWARE.calibration.compass[0].offset,
@@ -889,10 +881,6 @@ void loop() {
   static uint32_t nextCompass1SampleUs = 0;
   handleSerialCommands();
   updateLoggingButton();
-  if (sessionLog.pendingFlush()) {
-    sessionLog.stop();
-    Serial.println("SESSION_LOG STOPPED (BUFFER FLUSHED)");
-  }
   updateBootLogging();
   updateGPS(millis());
   if (qmcPOk) {
@@ -967,11 +955,12 @@ void loop() {
     // aircraft-axis remap only to the values entering the AHRS.
     float bodyGx = gx, bodyGy = gy, bodyGz = gz;
     float bodyAx = ax, bodyAy = ay, bodyAz = az;
-    halApplyRawGyroCalibration(HARDWARE.calibration,
+    const HalImuCalibration &imuCalibration = HARDWARE.calibration.imu[0];
+    halApplyRawGyroCalibration(imuCalibration,
                                bodyGx, bodyGy, bodyGz);
-    halApplySensorAxisRemap(HARDWARE.calibration.gyroAxisRemap,
+    halApplySensorAxisRemap(imuCalibration.gyroAxisRemap,
                             bodyGx, bodyGy, bodyGz);
-    halApplySensorAxisRemap(HARDWARE.calibration.sensorAxisRemap,
+    halApplySensorAxisRemap(imuCalibration.sensorAxisRemap,
                             bodyAx, bodyAy, bodyAz);
     ahrs.updateImu(bodyGx, bodyGy, bodyGz, nowUs,
                    bodyAx, bodyAy, bodyAz, imuSampleValid);
@@ -1031,7 +1020,7 @@ void loop() {
       static_cast<uint32_t>(sessionLog.dropped()),
       static_cast<uint32_t>(ESP.getFreeHeap() / 1024),
       static_cast<uint32_t>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
-      sessionLog.freeLogSeconds()
+      0
     };
     publishDisplayStatus(status);
   }

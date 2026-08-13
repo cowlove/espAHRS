@@ -1,6 +1,9 @@
-# ESP32-S3 Geek device test
+# espAHRS
 
-Bring-up sketch for the Amazon ESP32-S3 Geek board (ASIN B0CR6FV3QC).
+Flight AHRS and sensor-logging project targeting the Amazon ESP32-S3 Geek
+board (ASIN B0CR6FV3QC). The project was renamed from
+`esp32-s3-geek-device-test` to `espAHRS` after hardware investigation was
+completed.
 It tests the onboard 1.14-inch 240x135 IPS LCD, microSD/TF slot, ESP32
 resources, and the `ReliableStreamESPNow("GEEK")` broadcast channel at 1 Hz.
 

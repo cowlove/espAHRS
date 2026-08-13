@@ -81,7 +81,32 @@ int main() {
     // single-axis convention flip turns this into a reflection and breaks
     // coordinated-turn q/r cancellation.
     constexpr HalHardwareProfile tbeam = makeTBeamSupremeProfile();
-    assert(fabsf(determinant(tbeam.calibration.gyroAxisRemap) - 1.0f) < 1e-6f);
+    assert(fabsf(determinant(tbeam.calibration.imu[0].gyroAxisRemap) - 1.0f) < 1e-6f);
+
+    // The two currently installed GEEK IMUs have different raw polarity but
+    // their per-source maps must produce the same body-frame vectors.
+    constexpr HalHardwareProfile geek = makeGeekS3Profile();
+    float pGx = 10.0f, pGy = -20.0f, pGz = -30.0f;
+    halApplyRawGyroCalibration(geek.calibration.imu[0], pGx, pGy, pGz);
+    halApplySensorAxisRemap(geek.calibration.imu[0].gyroAxisRemap,
+                            pGx, pGy, pGz);
+    float sGx = 10.0f, sGy = 20.0f, sGz = 30.0f;
+    halApplyRawGyroCalibration(geek.calibration.imu[1], sGx, sGy, sGz);
+    halApplySensorAxisRemap(geek.calibration.imu[1].gyroAxisRemap,
+                            sGx, sGy, sGz);
+    // Remove IMU0's characterized bias for this polarity-only comparison.
+    assert(fabsf((pGx + geek.calibration.imu[0].gyroBiasDegSec[0]) - sGx) < 1e-6f);
+    assert(fabsf((pGy - geek.calibration.imu[0].gyroBiasDegSec[1]) - sGy) < 1e-6f);
+    assert(fabsf((pGz - geek.calibration.imu[0].gyroBiasDegSec[2]) - sGz) < 1e-6f);
+    float pAx = 1.0f, pAy = 2.0f, pAz = 3.0f;
+    float sAx = 1.0f, sAy = -2.0f, sAz = -3.0f;
+    halApplySensorAxisRemap(geek.calibration.imu[0].sensorAxisRemap,
+                            pAx, pAy, pAz);
+    halApplySensorAxisRemap(geek.calibration.imu[1].sensorAxisRemap,
+                            sAx, sAy, sAz);
+    assert(fabsf(pAx - sAx) < 1e-6f);
+    assert(fabsf(pAy - sAy) < 1e-6f);
+    assert(fabsf(pAz - sAz) < 1e-6f);
 
     // In aircraft X-forward/Z-down coordinates, a nose-up gravity vector has
     // negative X.  The public/internal pitch observation must be positive.
@@ -92,7 +117,7 @@ int main() {
 
     // Raw sensor bias/polarity must be applied before the installed-sensor
     // axis remap.  This guards the HAL/replay calibration ordering.
-    HalSensorCalibration rawCalibration{};
+    HalImuCalibration rawCalibration{};
     rawCalibration.gyroBiasDegSec[0] = 1.0f;
     rawCalibration.gyroBiasDegSec[1] = 2.0f;
     rawCalibration.gyroBiasDegSec[2] = 3.0f;
