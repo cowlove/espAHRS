@@ -258,7 +258,7 @@ constexpr HalHardwareProfile makeTBeamSupremeProfile() {
   p.calibration.gyroAxisRemap[0][2] = 0.0f;
   p.calibration.gyroAxisRemap[1][0] = 0.0f;
   p.calibration.gyroAxisRemap[1][1] = 0.0f;
-  p.calibration.gyroAxisRemap[1][2] = 1.0f;
+  p.calibration.gyroAxisRemap[1][2] = -1.0f;
   p.calibration.gyroAxisRemap[2][0] = 0.0f;
   p.calibration.gyroAxisRemap[2][1] = -1.0f;
   p.calibration.gyroAxisRemap[2][2] = 0.0f;

@@ -131,7 +131,8 @@ int main(int argc, char **argv) {
                          "time_s,g5_pitch,ahrs_pitch,accel_pitch,g5_slip_raw,"
                          "raw_accel_pitch,raw_pitch_gyro_deg_sec,gps_longitudinal_accel_mps2,"
                          "accel_magnitude_mps2,accel_sample_accepted,"
-                         "accel_sample_age_ms,gps_longitudinal_compensation_valid,error\n");
+                         "accel_sample_age_ms,gps_longitudinal_compensation_valid,"
+                         "pitch_correction_target_deg,error\n");
             continue;
         }
         if (std::strcmp(argv[i], "--imu-csv") == 0 && i + 1 < argc) {
@@ -345,7 +346,7 @@ int main(int argc, char **argv) {
                     if (pitchCsv) {
                         std::fprintf(pitchCsv,
                                      "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,"
-                                     "%d,%u,%d,%.6f\n",
+                                     "%d,%u,%d,%.6f,%.6f\n",
                                      h.timestampUs * 1.0e-6,
                                      g5Pitch, state.pitchDeg,
                                      state.accelerometerPitchDeg,
@@ -357,6 +358,7 @@ int main(int argc, char **argv) {
                                      state.accelerometerSampleAccepted ? 1 : 0,
                                      state.accelerometerSampleAgeMs,
                                      state.gpsLongitudinalCompensationValid ? 1 : 0,
+                                     state.pitchCorrectionTargetDeg,
                                      state.pitchDeg - g5Pitch);
                     }
                     ++g5Parsed;
