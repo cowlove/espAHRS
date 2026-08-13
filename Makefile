@@ -1,16 +1,15 @@
 BOARD ?= esp32s3
-PORT ?= /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_48:CA:43:5A:CC:B8-if00
+PORT ?= /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_28:37:2F:F8:24:7C-if00
 UPLOAD_PORT := $(PORT)
 MONITOR_PORT := $(PORT)
 CHIP ?= esp32
-DEVICE ?= tbeam
+DEVICE ?= geek
 ALIBS = ${HOME}/Arduino/libraries
 GIT_VERSION := "$(shell git describe --abbrev=8 --dirty --always --tags 2>/dev/null || echo local)"
 
 CDC_ON_BOOT = 1
-# The application and HAL are common to both boards, but their boot-time
-# memory modes differ.  Keep this selection in the build layer so a binary
-# made for one module is not accidentally flashed to the other.
+# The ESP32-S3 Geek is the active and default hardware target. The former
+# T-Beam target is abandoned and retained only as historical source code.
 ifeq ($(DEVICE),geek)
 BUILD_MEMORY_TYPE = qio_qspi
 BUILD_EXTRA_FLAGS += -DBOARD_HAS_PSRAM

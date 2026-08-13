@@ -96,15 +96,18 @@ The GEEK project contains its own copies of the fusion, logging, GPS, and
 replay sources. It no longer depends on a sibling T-Beam checkout. The
 replay/AHRS tuning workflow is documented in [TUNING.md](TUNING.md).
 
-### Board-specific build settings
+### Build settings
 
-Both boards compile the same application and HAL sources. Only the ESP32-S3
-memory/boot mode is selected per device by the Makefile:
+The ESP32-S3 Geek is the active hardware target. Build and flash it with:
 
 ```sh
-make DEVICE=tbeam                 # qio_qspi, octal PSRAM
-make DEVICE=geek PORT=<geek-port> # qio_qspi, GEEK memory layout
+make
+make upload
 ```
+
+The former T-Beam Supreme target is abandoned. Its historical source remains
+for reference, but it is no longer built, flashed, tested, or considered when
+changing the application.
 
 At startup the GEEK firmware probes the ICM-20948 at both possible addresses,
 then falls back to the LSM9DS1. The selected device's accelerometer, gyro, and
@@ -133,10 +136,6 @@ calibration and replay applies the selected source's calibration. The current
 GEEK `IMU1` mapping describes the temporary BerryIMUv3 mounting measured by
 `fusion-5484.bin`.
 
-### T-Beam display updates
-
-The T-Beam SH1106 display is rendered by a low-priority application-owned
-FreeRTOS task through the board-specific HAL entry point. It uses U8g2 page
-transfers with a delay between pages and continues updating during logging.
-The sensor loop and SD writer remain higher priority; occasional display bus
-contention is therefore visible as display latency rather than a frozen panel.
+During recording, the Geek display shows `LOG <seconds>s` next to the active
+logging indicator. The elapsed value comes from the current session's start
+time and resets for every new file.

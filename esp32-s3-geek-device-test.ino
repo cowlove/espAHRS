@@ -286,9 +286,7 @@ void setupDisplay() {
 
 // HAL display entry point. The application owns the task and publishes a
 // board-neutral status snapshot; this function owns only board-specific
-// rendering and is called by the low-priority display task. During logging,
-// the task is frozen after the LOG acknowledgement is rendered so the
-// display cannot interfere with acquisition.
+// rendering and is called by the low-priority display task.
 void halUpdateDisplay(const HalDisplayStatus &status) {
   if (!displayOk) return;
   uint32_t nowMs = status.uptimeSeconds * 1000UL;
@@ -311,7 +309,7 @@ void halUpdateDisplay(const HalDisplayStatus &status) {
     tbeamDisplay.drawStr(0, 34, line); taskYIELD();
     snprintf(line, sizeof(line), "H%5.1f V%4.1f", status.headingDeg, status.groundSpeedMps);
     tbeamDisplay.drawStr(0, 46, line); taskYIELD();
-    snprintf(line, sizeof(line), "LOG %lus", (unsigned long)status.freeLogSeconds);
+    snprintf(line, sizeof(line), "LOG %lus", (unsigned long)status.loggingElapsedSeconds);
     tbeamDisplay.drawStr(0, 58, line);
     more = tbeamDisplay.nextPage();
     // Do not dispatch the next page immediately.  Leaving a real bus-idle
@@ -347,7 +345,10 @@ void halUpdateDisplay(const HalDisplayStatus &status) {
 
   beginRow(2, 3);
   display.setTextColor(status.logging ? ST77XX_YELLOW : ST77XX_WHITE, ST77XX_BLACK);
-  display.print(status.logging ? "LOG" : "---");
+  if (status.logging)
+    display.printf("LOG %lus", (unsigned long)status.loggingElapsedSeconds);
+  else
+    display.print("---");
   display.setTextColor(ST77XX_WHITE, ST77XX_BLACK); display.printf(" D%lu", (unsigned long)status.droppedLogRecords);
 
   beginRow(3, 3);
@@ -355,7 +356,7 @@ void halUpdateDisplay(const HalDisplayStatus &status) {
   display.printf("%lus", (unsigned long)status.uptimeSeconds);
 
   beginRow(4, 3);
-  display.printf("LOG %lus", (unsigned long)status.freeLogSeconds);
+  display.printf("P %.1f", status.pressureHpa);
 }
 
 void setupStorage() {
@@ -1083,7 +1084,7 @@ void loop() {
       static_cast<uint32_t>(sessionLog.dropped()),
       static_cast<uint32_t>(ESP.getFreeHeap() / 1024),
       static_cast<uint32_t>(heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
-      0
+      sessionLog.elapsedSeconds()
     };
     publishDisplayStatus(status);
   }

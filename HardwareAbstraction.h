@@ -32,7 +32,7 @@ struct HalDisplayStatus {
   float gpsPdop, pressureHpa, rollDeg, pitchDeg, headingDeg, groundSpeedMps;
   uint32_t uptimeSeconds, droppedLogRecords;
   uint32_t freeRamKb, freePsramKb;
-  uint32_t freeLogSeconds;
+  uint32_t loggingElapsedSeconds;
 };
 
 // Numeric sensor calibration belongs to the board profile just like pin

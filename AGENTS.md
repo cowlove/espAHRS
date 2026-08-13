@@ -22,13 +22,21 @@ GPIO, I2C, and Wi-Fi/Bluetooth. It does not document onboard GNSS, IMU,
 LoRa, battery charging, or a PMU. The LCD pin map is verified in
 `BUILD_NOTES.md`; the SD pin remains a hardware-test assumption.
 
-Build with `make`; monitor with `make cat PORT=/dev/ttyACM0`.
+Build with `make`; monitor with `make cat`. Both default to the Geek board's
+stable USB device ID.
 Arduino CLI dependencies and exact install commands are documented in
 `README.md`. The detailed build/configuration investigation is in
 `BUILD_NOTES.md`. In summary, download Adafruit GFX Library, Adafruit ST7789,
 Adafruit BMP280 Library, Adafruit LIS3MDL, Adafruit BusIO, and Adafruit
 Unified Sensor. The local `esp32jimlib` and `Arduino_CRC32` libraries are
 shared dependencies and should not be downloaded again.
+
+## Active hardware target
+
+The ESP32-S3 Geek is the only active hardware target. The T-Beam Supreme
+target is abandoned: do not build, flash, test, or make compatibility changes
+for it unless Jim explicitly reverses this decision. `make` and `make upload`
+default to the Geek board and its stable USB device ID.
 
 ## IMU drift logging
 

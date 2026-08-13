@@ -20,6 +20,7 @@ class FusionSessionLog {
     FS *storage_ = &SD;
     volatile uint32_t sequence_ = 0, dropped_ = 0, written_ = 0, writeErrors_ = 0;
     volatile bool active_ = false;
+    uint32_t startedMs_ = 0;
     portMUX_TYPE producerMux_ = portMUX_INITIALIZER_UNLOCKED;
     char fileName_[32] = {};
 
@@ -95,6 +96,7 @@ private:
         file_ = storage_->open(fileName_, FILE_WRITE);
         if (!file_) return false;
         sequence_ = dropped_ = written_ = writeErrors_ = 0;
+        startedMs_ = millis();
         queue_ = xQueueCreate(QueueDepth, sizeof(QueueItem));
         if (!queue_) { file_.close(); return false; }
         active_ = true;
@@ -120,6 +122,9 @@ public:
     uint32_t dropped() const { return dropped_; }
     uint32_t written() const { return written_; }
     uint32_t writeErrors() const { return writeErrors_; }
+    uint32_t elapsedSeconds() const {
+        return active_ ? (millis() - startedMs_) / 1000U : 0U;
+    }
     const char *fileName() const { return fileName_; }
     bool selectFile(const char *requested) {
         if (!requested || !*requested) return false;
