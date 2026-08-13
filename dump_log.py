@@ -56,7 +56,7 @@ def read_protocol_line(ser, prefix, deadline):
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--port", default="/dev/ttyACM0")
+    ap.add_argument("--port", default="/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_28:37:2F:F8:24:7C-if00")
     ap.add_argument("--output", default="downloaded-fusion-log.bin")
     ap.add_argument("--file", help="specific SD filename, e.g. G247C001.bin")
     ap.add_argument("--timeout", type=float, default=300.0,

@@ -133,6 +133,10 @@ the live altitude/climb solution. The verified full-system capture delivered
 18.3 Hz; blocking compensated conversions and the other sensor work account
 for the difference from the configured sensor ODR.
 
+The BerryIMUv3 LSM6DSL accelerometer and gyro run at 104 Hz for the nominal
+50 Hz application stream. Accelerometer LPF1 is set to ODR/4 (about 26 Hz);
+the gyro's fixed LPF2 is about 33 Hz at this ODR.
+
 IMU calibration is indexed by the stable log source ID (`IMU0` through
 `IMU3`). Each source has independent accelerometer and gyro axis-remap
 matrices, gyro bias/polarity, accelerometer bias, and fine pitch/roll/yaw

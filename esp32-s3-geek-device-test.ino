@@ -648,8 +648,11 @@ void setupBerryIMU() {
   }
   if (secondaryImuOk) {
     secondaryLsm6Write(0x12, 0x44); // BDU and register-address auto-increment
-    secondaryLsm6Write(0x11, 0x50); // gyro: 208 Hz, 245 dps
-    secondaryLsm6Write(0x10, 0x50); // accel: 208 Hz, 2 g
+    // For the 50 Hz application stream, use roughly two internal samples per
+    // delivered sample. At 104 Hz the gyro's fixed LPF2 is about 33 Hz; the
+    // accelerometer LPF1 ODR/4 selection gives about 26 Hz bandwidth.
+    secondaryLsm6Write(0x11, 0x40); // gyro: 104 Hz, 245 dps
+    secondaryLsm6Write(0x10, 0x42); // accel: 104 Hz, 2 g, LPF1 ODR/4
   }
   Serial.printf("Secondary LSM6DSL address=0x6A: %s (WHO_AM_I=0x%02X)\n", secondaryImuOk ? "OK" : "not detected", secondaryWhoAmI);
   if (HARDWARE.kind == HalBoardKind::TBeamSupreme) {
