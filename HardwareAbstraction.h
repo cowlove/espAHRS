@@ -100,6 +100,13 @@ inline void halApplySensorAxisRemap(const float matrix[3][3],
   z = matrix[2][0] * inX + matrix[2][1] * inY + matrix[2][2] * inZ;
 }
 
+inline void halApplyRawGyroCalibration(const HalSensorCalibration &calibration,
+                                       float &x, float &y, float &z) {
+  x = (x - calibration.gyroBiasDegSec[0]) * calibration.gyroAxisSign[0];
+  y = (y - calibration.gyroBiasDegSec[1]) * calibration.gyroAxisSign[1];
+  z = (z - calibration.gyroBiasDegSec[2]) * calibration.gyroAxisSign[2];
+}
+
 inline void halRotateVector(const float matrix[3][3], float &x, float &y,
                             float &z) {
   const float a = matrix[0][0] * x + matrix[0][1] * y + matrix[0][2] * z;
@@ -230,14 +237,16 @@ constexpr HalHardwareProfile makeTBeamSupremeProfile() {
   p.gpsUartIndex = 1;
   p.display = HalDisplayKind::TBeamSupreme_SH1106;
   p.hasSd = true; p.hasLogButton = true;
-  // Calibration is intentionally neutral until this physical sample is
-  // mounted and measured.  Do not reuse the GEEK's flight calibration.
-  p.calibration.sensorPitchOffsetDeg = 0.0f;
-  p.calibration.sensorRollOffsetDeg = -4.0f;
+  // Calibration for this mounted physical sample.  Keep it independent of
+  // the GEEK profile and apply raw gyro biases before the axis remap.
+  p.calibration.sensorPitchOffsetDeg = 3.70f;
+  p.calibration.sensorRollOffsetDeg = -3.52f;
   p.calibration.sensorYawOffsetDeg = 0.0f;
-  p.calibration.gyroBiasDegSec[0] = 0.0f;
-  p.calibration.gyroBiasDegSec[1] = 0.0f;
-  p.calibration.gyroBiasDegSec[2] = 0.0f;
+  // Raw QMI8658 sensor-axis zero-rate offsets, applied before the installed
+  // sensor-to-aircraft remap.
+  p.calibration.gyroBiasDegSec[0] = 3.92f;
+  p.calibration.gyroBiasDegSec[1] = 0.12f;
+  p.calibration.gyroBiasDegSec[2] = -0.58f;
   p.calibration.gyroAxisSign[0] = 1.0f;
   p.calibration.gyroAxisSign[1] = 1.0f;
   p.calibration.gyroAxisSign[2] = 1.0f;
@@ -258,7 +267,7 @@ constexpr HalHardwareProfile makeTBeamSupremeProfile() {
   p.calibration.gyroAxisRemap[0][2] = 0.0f;
   p.calibration.gyroAxisRemap[1][0] = 0.0f;
   p.calibration.gyroAxisRemap[1][1] = 0.0f;
-  p.calibration.gyroAxisRemap[1][2] = -1.0f;
+  p.calibration.gyroAxisRemap[1][2] = 1.0f;
   p.calibration.gyroAxisRemap[2][0] = 0.0f;
   p.calibration.gyroAxisRemap[2][1] = -1.0f;
   p.calibration.gyroAxisRemap[2][2] = 0.0f;

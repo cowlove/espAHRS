@@ -459,8 +459,11 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
             float currentRoll = state_.rollDeg * DEG_TO_RAD_F;
             float correctedZ = -sinf(currentRoll) * filteredAccelY_ +
                                cosf(currentRoll) * filteredAccelZ_;
+            // Aerospace pitch is positive nose-up.  With aircraft X forward
+            // and Z down, gravity/specific-force tilt produces negative X
+            // during a nose-up attitude, hence the explicit X negation.
             float rawAccelPitch =
-                atan2f(filteredAccelX_, correctedZ) * RAD_TO_DEG_F;
+                atan2f(-filteredAccelX_, correctedZ) * RAD_TO_DEG_F;
             bool turnAllowsLongitudinalCompensation =
                 !state_.gpsTurnRateBankValid ||
                 fabsf(state_.gpsTurnRateBankDeg) <=
@@ -474,7 +477,7 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
                           state_.gpsLongitudinalAccelerationMps2
                     : 0.0f;
             float compensatedAccelX = filteredAccelX_ - longitudinalCompensation;
-            float accelPitch = atan2f(compensatedAccelX, correctedZ) * RAD_TO_DEG_F;
+            float accelPitch = atan2f(-compensatedAccelX, correctedZ) * RAD_TO_DEG_F;
             float horizontal = sqrtf(filteredAccelX_ * filteredAccelX_ +
                                      filteredAccelZ_ * filteredAccelZ_);
             float accelRoll = atan2f(filteredAccelY_, horizontal) * RAD_TO_DEG_F;

@@ -13,6 +13,13 @@
 struct ReplayConfig {
     AircraftAHRS::Config ahrs;
     float g5HeadingOffsetDeg = 0.0f;
+    // Added to raw G5 pitch before comparisons/CSV output.  This normalizes a
+    // known reference-instrument trim error without contaminating sensor
+    // mounting offsets or gyro calibration.
+    // Run-1 straight-and-level G5 pitch averaged -4.641758 degrees.  Treat
+    // that as reference-instrument trim so replay comparisons use a level
+    // zero without folding the G5 error into aircraft sensor calibration.
+    float g5PitchBiasDeg = 4.641758f;
     float g5TimeOffsetMs = 20.0f;
     float sensorPitchOffsetDeg = 11.7f;
     float sensorRollOffsetDeg = 6.0f;
@@ -20,19 +27,18 @@ struct ReplayConfig {
     float accelInputScale = 1.0f;
     uint8_t selectedImuSource = 0;
     uint8_t selectedCompassSource = 0;
+    float rawGyroBiasDegSec[3] = {0.0f, 0.0f, 0.0f};
+    float rawGyroAxisSign[3] = {1.0f, 1.0f, 1.0f};
 
-    ReplayConfig() {
-        constexpr HalHardwareProfile hardware = makeGeekS3Profile();
+    explicit ReplayConfig(const HalHardwareProfile &hardware) {
         const HalSensorCalibration &calibration = hardware.calibration;
         sensorPitchOffsetDeg = calibration.sensorPitchOffsetDeg;
         sensorRollOffsetDeg = calibration.sensorRollOffsetDeg;
         sensorYawOffsetDeg = calibration.sensorYawOffsetDeg;
-        ahrs.gyroBiasXDegSec = calibration.gyroBiasDegSec[0];
-        ahrs.gyroBiasYDegSec = calibration.gyroBiasDegSec[1];
-        ahrs.gyroBiasZDegSec = calibration.gyroBiasDegSec[2];
-        ahrs.gyroAxisSignX = calibration.gyroAxisSign[0];
-        ahrs.gyroAxisSignY = calibration.gyroAxisSign[1];
-        ahrs.gyroAxisSignZ = calibration.gyroAxisSign[2];
+        for (int axis = 0; axis < 3; ++axis) {
+            rawGyroBiasDegSec[axis] = calibration.gyroBiasDegSec[axis];
+            rawGyroAxisSign[axis] = calibration.gyroAxisSign[axis];
+        }
         if (calibration.applyAccelBias) {
             ahrs.accelBiasXMps2 = calibration.accelBiasMps2[0];
             ahrs.accelBiasYMps2 = calibration.accelBiasMps2[1];
@@ -54,12 +60,13 @@ struct ReplayConfig {
             {"fused_heading_filter_sec", &ahrs.fusedHeadingFilterTimeSec},
             {"gps_heading_speed_threshold_mps", &ahrs.gpsHeadingSpeedThresholdMps},
             {"gps_heading_weight", &ahrs.gpsHeadingWeight},
-            {"gyro_bias_x_deg_sec", &ahrs.gyroBiasXDegSec},
-            {"gyro_bias_y_deg_sec", &ahrs.gyroBiasYDegSec},
-            {"gyro_bias_z_deg_sec", &ahrs.gyroBiasZDegSec},
-            {"gyro_axis_sign_x", &ahrs.gyroAxisSignX},
-            {"gyro_axis_sign_y", &ahrs.gyroAxisSignY},
-            {"gyro_axis_sign_z", &ahrs.gyroAxisSignZ},
+            {"g5_pitch_bias_deg", &g5PitchBiasDeg},
+            {"gyro_bias_x_deg_sec", &rawGyroBiasDegSec[0]},
+            {"gyro_bias_y_deg_sec", &rawGyroBiasDegSec[1]},
+            {"gyro_bias_z_deg_sec", &rawGyroBiasDegSec[2]},
+            {"gyro_axis_sign_x", &rawGyroAxisSign[0]},
+            {"gyro_axis_sign_y", &rawGyroAxisSign[1]},
+            {"gyro_axis_sign_z", &rawGyroAxisSign[2]},
             {"gyro_gain_x", &ahrs.gyroGainX},
             {"gyro_gain_y", &ahrs.gyroGainY},
             {"gyro_gain_z", &ahrs.gyroGainZ},
@@ -148,7 +155,7 @@ struct ReplayConfig {
                    "magnetic_roll_max_disagreement_deg magnetic_roll_min_geometry "
                    "min_ground_speed_mps baro_alt_filter_sec "
                    "baro_rate_filter_sec baro_gps_bias_sec baro_timeout_sec "
-                   "g5_heading_offset_deg g5_time_offset_ms "
+                   "g5_heading_offset_deg g5_pitch_bias_deg g5_time_offset_ms "
                    "sensor_pitch_offset_deg sensor_roll_offset_deg sensor_yaw_offset_deg accel_input_scale "
                    "imu_source compass_source");
     }

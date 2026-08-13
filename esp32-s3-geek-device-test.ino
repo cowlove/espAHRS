@@ -95,12 +95,10 @@ SharedUbloxGPS sharedGps;
 static AircraftAHRS::Config makeAhrsConfigFromHal() {
   AircraftAHRS::Config config;
   const HalSensorCalibration &calibration = HARDWARE.calibration;
-  config.gyroBiasXDegSec = calibration.gyroBiasDegSec[0];
-  config.gyroBiasYDegSec = calibration.gyroBiasDegSec[1];
-  config.gyroBiasZDegSec = calibration.gyroBiasDegSec[2];
-  config.gyroAxisSignX = calibration.gyroAxisSign[0];
-  config.gyroAxisSignY = calibration.gyroAxisSign[1];
-  config.gyroAxisSignZ = calibration.gyroAxisSign[2];
+  // Raw gyro bias and polarity belong to the sensor frame and are applied
+  // immediately before gyroAxisRemap at the sample call site.  AircraftAHRS
+  // therefore receives already-remapped body rates with neutral raw-axis
+  // calibration here.
   if (calibration.applyAccelBias) {
     config.accelBiasXMps2 = calibration.accelBiasMps2[0];
     config.accelBiasYMps2 = calibration.accelBiasMps2[1];
@@ -749,6 +747,11 @@ void setup() {
   HARDWARE = detectBoard() == HalBoardKind::TBeamSupreme
       ? makeTBeamSupremeProfile() : makeGeekS3Profile();
   Serial.printf("HAL board auto-detect: %s\n", HARDWARE.name);
+  // The global AHRS is constructed before runtime board detection, when the
+  // provisional profile is GEEK. Reconstruct it from the detected profile so
+  // per-board bias, polarity, and acceleration calibration cannot leak across
+  // hardware variants.
+  ahrs = AircraftAHRS(makeAhrsConfigFromHal());
   if (HARDWARE.hasLogButton) pinMode(HARDWARE.logButton, INPUT_PULLUP);
   halMakeSensorFrameRotation(HARDWARE.calibration.sensorPitchOffsetDeg,
                              HARDWARE.calibration.sensorRollOffsetDeg,
@@ -872,6 +875,8 @@ void loop() {
     // aircraft-axis remap only to the values entering the AHRS.
     float bodyGx = gx, bodyGy = gy, bodyGz = gz;
     float bodyAx = ax, bodyAy = ay, bodyAz = az;
+    halApplyRawGyroCalibration(HARDWARE.calibration,
+                               bodyGx, bodyGy, bodyGz);
     halApplySensorAxisRemap(HARDWARE.calibration.gyroAxisRemap,
                             bodyGx, bodyGy, bodyGz);
     halApplySensorAxisRemap(HARDWARE.calibration.sensorAxisRemap,
