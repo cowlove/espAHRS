@@ -69,6 +69,7 @@ HardwareSerial gpsSerial(1);
 Adafruit_LSM9DS1 imu;
 ICM_20948_I2C icm20948;
 SensorQMI8658 qmi8658;
+SensorQMI8658 qmi8658Secondary;
 SensorQMC6310 qmc6310;
 XPowersAXP2101 pmu;
 IMUdata qmiAccel, qmiGyro;
@@ -79,6 +80,70 @@ Adafruit_BME280 bme;
 bool bmeOk = false;
 enum class ImuKind { None, LSM9DS1, ICM20948, QMI8658 };
 ImuKind imuKind = ImuKind::None;
+bool secondaryImuOk = false;
+constexpr uint8_t SECONDARY_LSM6DSL = 0x6A;
+static bool secondaryLsm6Read(uint8_t reg, uint8_t *buf, size_t n) {
+  Wire.beginTransmission(SECONDARY_LSM6DSL); Wire.write(reg);
+  if (Wire.endTransmission(false) != 0 || Wire.requestFrom(SECONDARY_LSM6DSL, (uint8_t)n) != n) return false;
+  for (size_t i=0; i<n; ++i) buf[i] = Wire.read();
+  return true;
+}
+static bool secondaryLsm6Write(uint8_t reg, uint8_t value) {
+  Wire.beginTransmission(SECONDARY_LSM6DSL); Wire.write(reg); Wire.write(value);
+  return Wire.endTransmission() == 0;
+}
+static bool readSecondaryLsm6(float &gx, float &gy, float &gz,
+                              float &ax, float &ay, float &az, float &temp) {
+  uint8_t b[12], t[2];
+  if (!secondaryLsm6Read(0x22, b, sizeof(b))) return false;
+  auto s16 = [](uint8_t lo, uint8_t hi) { return (int16_t)((uint16_t)lo | ((uint16_t)hi << 8)); };
+  gx = s16(b[0],b[1]) * 0.00875f; gy = s16(b[2],b[3]) * 0.00875f; gz = s16(b[4],b[5]) * 0.00875f;
+  constexpr float accelMps2PerLsb = 0.000061f * 9.80665f;
+  ax = s16(b[6],b[7]) * accelMps2PerLsb; ay = s16(b[8],b[9]) * accelMps2PerLsb;
+  az = s16(b[10],b[11]) * accelMps2PerLsb;
+  temp = secondaryLsm6Read(0x20, t, 2) ? 25.0f + s16(t[0],t[1]) / 256.0f : NAN;
+  return true;
+}
+
+struct GyroDriftLogger {
+  bool active = false;
+  uint32_t startedMs = 0;
+  uint32_t windowStartedMs = 0;
+  uint32_t samples[2] = {0, 0};
+  double sum[2][3] = {{0, 0, 0}, {0, 0, 0}};
+
+  void resetWindow(uint32_t now) {
+    windowStartedMs = now; samples[0] = samples[1] = 0;
+    memset(sum, 0, sizeof(sum));
+  }
+  void start(uint32_t now) {
+    active = true; startedMs = now; resetWindow(now);
+    Serial.println("GYRO_DRIFT STARTED interval_s=10 units=dps");
+    Serial.println("GYRO_DRIFT_COLUMNS elapsed_s,imu,samples,gyro_x_dps,gyro_y_dps,gyro_z_dps,temperature_c");
+  }
+  void stop(uint32_t now) {
+    active = false;
+    Serial.printf("GYRO_DRIFT STOPPED elapsed_s=%.3f\n", (now-startedMs)*0.001f);
+  }
+  void add(uint8_t which, float x, float y, float z) {
+    if (!active || which > 1) return;
+    sum[which][0] += x; sum[which][1] += y; sum[which][2] += z; ++samples[which];
+  }
+  void update(uint32_t now, float primaryTemp, float secondaryTemp) {
+    if (!active || (uint32_t)(now-windowStartedMs) < 10000) return;
+    for (uint8_t i = 0; i < 2; ++i) {
+      float temp = i == 0 ? primaryTemp : secondaryTemp;
+      if (samples[i]) Serial.printf("GYRO_DRIFT %.3f,%s,%lu,%.6f,%.6f,%.6f,%.3f\n",
+        (now-startedMs)*0.001f, i == 0 ? "primary" : "secondary",
+        (unsigned long)samples[i], sum[i][0]/samples[i], sum[i][1]/samples[i],
+        sum[i][2]/samples[i], temp);
+      else Serial.printf("GYRO_DRIFT %.3f,%s,0,nan,nan,nan,%.3f\n",
+        (now-startedMs)*0.001f, i == 0 ? "primary" : "secondary", temp);
+    }
+    resetWindow(now);
+  }
+};
+GyroDriftLogger gyroDrift;
 bool displayOk = false, sdOk = false, imuOk = false, baroOk = false, qmcOk = false;
 bool qmcPOk = false;
 bool gpsOk = false;
@@ -521,6 +586,17 @@ void handleSerialCommands() {
         }
       } else if (command.equalsIgnoreCase("SCAN")) {
         scanI2c();
+      } else if (command.equalsIgnoreCase("GYRO_DRIFT_START")) {
+        if (sessionLog.active()) Serial.println("GYRO_DRIFT ERROR session_log_active");
+        else if (gyroDrift.active) Serial.println("GYRO_DRIFT ALREADY_STARTED");
+        else gyroDrift.start(millis());
+      } else if (command.equalsIgnoreCase("GYRO_DRIFT_STOP")) {
+        if (gyroDrift.active) gyroDrift.stop(millis());
+        else Serial.println("GYRO_DRIFT ALREADY_STOPPED");
+      } else if (command.equalsIgnoreCase("GYRO_DRIFT_STATUS")) {
+        Serial.printf("GYRO_DRIFT STATUS active=%s secondary=%s elapsed_s=%.3f\n",
+                      gyroDrift.active ? "yes" : "no", secondaryImuOk ? "yes" : "no",
+                      gyroDrift.active ? (millis()-gyroDrift.startedMs)*0.001f : 0.0f);
       } else if (command.length()) {
         Serial.println("LOG_ERROR UNKNOWN_COMMAND");
       }
@@ -538,6 +614,21 @@ void setupBerryIMU() {
   // the ESP32-S3 defaults can overlap the LCD's DC/RESET pins (8/9).
   Wire.begin(HARDWARE.i2cSda, HARDWARE.i2cScl);
   Wire.setTimeOut(20); // Missing Qwiic hardware must never stall the test.
+  uint8_t secondaryWhoAmI = 0;
+  // The externally powered BerryIMU can become ready slightly after the ESP32
+  // I2C controller. Do not permanently lose IMU1 because the first transaction
+  // after boot happened during that interval.
+  for (uint8_t attempt = 0; attempt < 20 && !secondaryImuOk; ++attempt) {
+    secondaryImuOk = secondaryLsm6Read(0x0F, &secondaryWhoAmI, 1) &&
+                     secondaryWhoAmI == 0x6A;
+    if (!secondaryImuOk) delay(25);
+  }
+  if (secondaryImuOk) {
+    secondaryLsm6Write(0x12, 0x44); // BDU and register-address auto-increment
+    secondaryLsm6Write(0x11, 0x50); // gyro: 208 Hz, 245 dps
+    secondaryLsm6Write(0x10, 0x50); // accel: 208 Hz, 2 g
+  }
+  Serial.printf("Secondary LSM6DSL address=0x6A: %s (WHO_AM_I=0x%02X)\n", secondaryImuOk ? "OK" : "not detected", secondaryWhoAmI);
   if (HARDWARE.kind == HalBoardKind::TBeamSupreme) {
   Serial.println("T-Beam I2C scan SDA=17 SCL=18");
   // Include 0x7C: the LilyGO QMC63xx example defines QMC6309 there.
@@ -867,6 +958,7 @@ void loop() {
     uint64_t nowUs = micros();
     bool imuSampleValid = isfinite(ax) && isfinite(ay) && isfinite(az) && isfinite(gx) && isfinite(gy) && isfinite(gz);
     bool compass0Valid = isfinite(mx) && isfinite(my) && isfinite(mz);
+    gyroDrift.add(0, gx, gy, gz);
     if (sessionLog.active()) sessionLog.appendImu(nowUs,
       gx, gy, gz, ax, ay, az, imuSampleValid);
     if (sessionLog.active()) sessionLog.appendCompass(0, nowUs,
@@ -884,6 +976,22 @@ void loop() {
     ahrs.updateImu(bodyGx, bodyGy, bodyGz, nowUs,
                    bodyAx, bodyAy, bodyAz, imuSampleValid);
     ahrs.updateCompass(0, mx, my, mz, compass0Valid, millis());
+  }
+  float secondaryTemp = NAN;
+  if (secondaryImuOk) {
+    float sgx, sgy, sgz, sax, say, saz;
+    uint64_t secondaryNowUs = micros();
+    if (readSecondaryLsm6(sgx, sgy, sgz, sax, say, saz, secondaryTemp)) {
+      gyroDrift.add(1, sgx, sgy, sgz);
+      if (sessionLog.active()) sessionLog.appendImu(1, secondaryNowUs,
+        sgx, sgy, sgz, sax, say, saz,
+        isfinite(sgx) && isfinite(sgy) && isfinite(sgz) &&
+        isfinite(sax) && isfinite(say) && isfinite(saz));
+    }
+  }
+  if (gyroDrift.active) {
+    float primaryTemp = imuKind == ImuKind::QMI8658 ? qmi8658.getTemperature_C() : NAN;
+    gyroDrift.update(millis(), primaryTemp, secondaryTemp);
   }
   if (baroOk) {
     float pressurePa = HARDWARE.kind == HalBoardKind::TBeamSupreme

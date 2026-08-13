@@ -13,20 +13,30 @@ enum FusionLogType : uint8_t { FUSION_LOG_EVENT=1, FUSION_LOG_G5_RAW_ESPNOW=2,
     FUSION_LOG_IMU=FUSION_LOG_IMU0 };
 
 inline FusionLogType fusionImuLogType(uint8_t source) {
-    return static_cast<FusionLogType>(FUSION_LOG_IMU0 + source);
+    switch (source) {
+    case 1: return FUSION_LOG_IMU1;
+    case 2: return FUSION_LOG_IMU2;
+    case 3: return FUSION_LOG_IMU3;
+    default: return FUSION_LOG_IMU0;
+    }
 }
 inline FusionLogType fusionCompassLogType(uint8_t source) {
     return static_cast<FusionLogType>(FUSION_LOG_COMPASS0 + source);
 }
 inline bool fusionLogIsImu(FusionLogType type) {
-    return type >= FUSION_LOG_IMU0 && type <= FUSION_LOG_IMU3;
+    return type == FUSION_LOG_IMU0 || type == FUSION_LOG_IMU1 ||
+           type == FUSION_LOG_IMU2 || type == FUSION_LOG_IMU3;
 }
 inline bool fusionLogIsCompass(FusionLogType type) {
     return type >= FUSION_LOG_COMPASS0 && type <= FUSION_LOG_COMPASS3;
 }
 inline uint8_t fusionLogSource(FusionLogType type) {
-    return fusionLogIsImu(type) ? static_cast<uint8_t>(type - FUSION_LOG_IMU0)
-                                : static_cast<uint8_t>(type - FUSION_LOG_COMPASS0);
+    switch (type) {
+    case FUSION_LOG_IMU1: case FUSION_LOG_COMPASS1: return 1;
+    case FUSION_LOG_IMU2: case FUSION_LOG_COMPASS2: return 2;
+    case FUSION_LOG_IMU3: case FUSION_LOG_COMPASS3: return 3;
+    default: return 0;
+    }
 }
 struct FusionImuRecord { uint64_t timestampUs; float gyroX, gyroY, gyroZ;
     float accelX, accelY, accelZ; uint8_t valid; };

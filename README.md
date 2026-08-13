@@ -41,7 +41,7 @@ Versions used during bring-up:
 |---|---:|---|
 | Adafruit GFX Library | 1.12.6 | Display drawing primitives |
 | Adafruit ST7735 and ST7789 Library | 1.11.0 | ST7789-class 240×135 LCD |
-| Adafruit LSM9DS1 Library | 2.2.1 | BerryIMUv3 accelerometer, gyro, magnetometer |
+| Adafruit LSM9DS1 Library | 2.2.1 | Legacy BerryIMU support |
 | SparkFun ICM-20948 Arduino Library | current | SparkFun Qwiic 9DoF ICM-20948 accelerometer, gyro, magnetometer |
 | Adafruit BMP280 Library | 3.0.0 | BerryIMUv3 pressure/altitude |
 | Adafruit LIS3MDL | 1.2.5 | LSM9DS1 library dependency |

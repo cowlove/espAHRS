@@ -5,8 +5,8 @@ It tests the onboard 1.14-inch 240x135 IPS LCD, microSD/TF slot, ESP32
 resources, and the `ReliableStreamESPNow("GEEK")` broadcast channel at 1 Hz.
 
 An external BerryIMUv3 can be connected to the I2C header. The sketch probes
-its LSM9DS1 accelerometer/gyro/magnetometer at 0x6B/0x1C and BMP280 at 0x76
-or 0x77, then includes sensor health and pressure in the 1 Hz report. The
+its LSM6DSL accelerometer/gyro at 0x6A, LIS3MDL magnetometer at 0x1C, and
+BMP280 at 0x76 or 0x77, then includes sensor health and pressure in the 1 Hz report. The
 board is external; it is not an onboard peripheral.
 
 All external sensors are optional. I2C has a 20 ms transaction timeout and
@@ -26,3 +26,9 @@ Arduino CLI dependencies and exact install commands are documented in
 Adafruit BMP280 Library, Adafruit LIS3MDL, Adafruit BusIO, and Adafruit
 Unified Sensor. The local `esp32jimlib` and `Arduino_CRC32` libraries are
 shared dependencies and should not be downloaded again.
+
+## IMU drift logging
+
+`GYRO_DRIFT_START` / `GYRO_DRIFT_STOP` are the supported serial commands for
+long stationary drift captures. The command reports ten-second raw gyro means
+for every available IMU; use `capture_gyro_drift.py` to save them as CSV.
