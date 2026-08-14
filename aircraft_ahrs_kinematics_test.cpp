@@ -155,6 +155,30 @@ int main() {
     assert(fabsf(state.lastPitchBodyRateDegSec - y) < 1e-5f);
     assert(fabsf(state.lastYawBodyRateDegSec - z) < 1e-5f);
 
+    // The adaptive estimator starts from zero every boot, qualifies only
+    // during quiet straight/stationary evidence, and then converges toward
+    // the residual bias without changing the fixed calibration.
+    AircraftAHRS::Config adaptiveConfig;
+    adaptiveConfig.gyroIntegrationDtSec = 0.02f;
+    adaptiveConfig.adaptiveGyroBiasQualificationTimeSec = 0.2f;
+    adaptiveConfig.adaptiveGyroBiasLearningTimeSec = 0.2f;
+    adaptiveConfig.adaptiveGyroBiasMeanTimeSec = 0.02f;
+    AircraftAHRS adaptive(adaptiveConfig);
+    for (uint32_t ms = 0; ms <= 1200; ms += 20) {
+        if (ms % 100 == 0) adaptive.updateGps(90, 0, 100, true, ms + 1);
+        adaptive.updateImu(0.4f, -0.2f, 0.1f, (ms + 1) * 1000,
+                           0, 0, 9.80665f, true);
+    }
+    const auto &adapted = adaptive.state(1201);
+    assert(adapted.adaptiveGyroBiasQualified);
+    assert(fabsf(adapted.adaptiveGyroBiasXDegSec - 0.4f) < 0.02f);
+    assert(fabsf(adapted.adaptiveGyroBiasYDegSec + 0.2f) < 0.02f);
+    assert(fabsf(adapted.adaptiveGyroBiasZDegSec - 0.1f) < 0.02f);
+    adaptive.updateImu(5, 0, 0, 1221000, 0, 0, 9.80665f, true);
+    assert(!adaptive.state(1221).adaptiveGyroBiasQualified);
+    adaptive.reset();
+    assert(adaptive.state(0).adaptiveGyroBiasXDegSec == 0.0f);
+
     puts("Aircraft AHRS kinematics tests passed");
     return 0;
 }

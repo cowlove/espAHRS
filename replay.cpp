@@ -159,7 +159,7 @@ int main(int argc, char **argv) {
         if (std::strcmp(argv[i], "--imu-csv") == 0 && i + 1 < argc) {
             imuCsv = std::fopen(argv[++i], "w");
             if (!imuCsv) { std::perror("--imu-csv"); return 1; }
-                std::fprintf(imuCsv, "time_s,dt_s,raw_gyro_x_deg_sec,raw_gyro_y_deg_sec,raw_gyro_z_deg_sec,body_pitch_rate_deg_sec,yaw_rate_deg_sec,pitch_q_contribution_deg_sec,pitch_yaw_coupling_deg_sec,gyro_pitch_delta_deg,accel_pitch_correction_delta_deg,gps_pitch_correction_delta_deg,ahrs_roll,ahrs_pitch,gyro_sample_accepted\n");
+                std::fprintf(imuCsv, "time_s,dt_s,raw_gyro_x_deg_sec,raw_gyro_y_deg_sec,raw_gyro_z_deg_sec,body_pitch_rate_deg_sec,yaw_rate_deg_sec,pitch_q_contribution_deg_sec,pitch_yaw_coupling_deg_sec,gyro_pitch_delta_deg,accel_pitch_correction_delta_deg,gps_pitch_correction_delta_deg,ahrs_roll,ahrs_pitch,gyro_sample_accepted,adaptive_bias_qualified,adaptive_bias_qualifying_sec,adaptive_bias_x_deg_sec,adaptive_bias_y_deg_sec,adaptive_bias_z_deg_sec,adaptive_candidate_x_deg_sec,adaptive_candidate_y_deg_sec,adaptive_candidate_z_deg_sec,adaptive_stddev_x_deg_sec,adaptive_stddev_y_deg_sec,adaptive_stddev_z_deg_sec\n");
             continue;
         }
         if (std::strcmp(argv[i], "--param") == 0 && i + 1 < argc) ++i;
@@ -288,7 +288,7 @@ int main(int argc, char **argv) {
                             r.accelX, r.accelY, r.accelZ, r.valid != 0);
             if (imuCsv) {
                 const auto &s = ahrs.state(nowMs);
-                std::fprintf(imuCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d\n",
+                std::fprintf(imuCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
                              h.timestampUs * 1.0e-6, s.lastImuDtSec,
                              r.gyroX, r.gyroY, r.gyroZ,
                              s.lastPitchBodyRateDegSec, s.lastYawBodyRateDegSec,
@@ -298,7 +298,18 @@ int main(int argc, char **argv) {
                              s.lastPitchAccelCorrectionDeltaDeg,
                              s.lastPitchGpsCorrectionDeltaDeg,
                              s.rollDeg, s.pitchDeg,
-                             s.lastGyroSampleAccepted ? 1 : 0);
+                             s.lastGyroSampleAccepted ? 1 : 0,
+                             s.adaptiveGyroBiasQualified ? 1 : 0,
+                             s.adaptiveGyroBiasQualifyingTimeSec,
+                             s.adaptiveGyroBiasXDegSec,
+                             s.adaptiveGyroBiasYDegSec,
+                             s.adaptiveGyroBiasZDegSec,
+                             s.adaptiveGyroBiasCandidateXDegSec,
+                             s.adaptiveGyroBiasCandidateYDegSec,
+                             s.adaptiveGyroBiasCandidateZDegSec,
+                             s.adaptiveGyroBiasStdDevXDegSec,
+                             s.adaptiveGyroBiasStdDevYDegSec,
+                             s.adaptiveGyroBiasStdDevZDegSec);
             }
             break;
             }

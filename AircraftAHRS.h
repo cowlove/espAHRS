@@ -40,6 +40,18 @@ public:
         float gyroRateLimitDegSec = 60.0f;
         // Fixed per-sample gyro integration weight. Zero uses measured dt.
         float gyroIntegrationDtSec = 0.020f;
+        // Boot-local, slow gyro-bias adaptation. Raw log records and the
+        // fixed per-device sensor calibration remain untouched.
+        bool adaptiveGyroBiasEnabled = true;
+        float adaptiveGyroBiasQualificationTimeSec = 30.0f;
+        float adaptiveGyroBiasLearningTimeSec = 1200.0f;
+        float adaptiveGyroBiasMeanTimeSec = 10.0f;
+        float adaptiveGyroBiasMaximumDegSec = 1.0f;
+        float adaptiveGyroBiasMaximumBodyRateDegSec = 1.5f;
+        float adaptiveGyroBiasMaximumGpsTrackRateDegSec = 0.5f;
+        float adaptiveGyroBiasMaximumStdDevDegSec = 0.15f;
+        float adaptiveGyroBiasAccelToleranceMps2 = 0.35f;
+        float adaptiveGyroBiasStationarySpeedMps = 2.0f;
         float accelBiasXMps2 = 0.0f;
         float accelBiasYMps2 = 0.0f;
         float accelBiasZMps2 = 0.0f;
@@ -157,6 +169,17 @@ public:
         float lastPitchQContributionDegSec = 0;
         float lastPitchYawCouplingDegSec = 0;
         bool lastGyroSampleAccepted = false;
+        bool adaptiveGyroBiasQualified = false;
+        float adaptiveGyroBiasQualifyingTimeSec = 0;
+        float adaptiveGyroBiasXDegSec = 0;
+        float adaptiveGyroBiasYDegSec = 0;
+        float adaptiveGyroBiasZDegSec = 0;
+        float adaptiveGyroBiasCandidateXDegSec = 0;
+        float adaptiveGyroBiasCandidateYDegSec = 0;
+        float adaptiveGyroBiasCandidateZDegSec = 0;
+        float adaptiveGyroBiasStdDevXDegSec = 0;
+        float adaptiveGyroBiasStdDevYDegSec = 0;
+        float adaptiveGyroBiasStdDevZDegSec = 0;
     };
 
     AircraftAHRS();
@@ -236,6 +259,11 @@ private:
     float filteredBaroRateMps_ = 0;
     float baroBiasM_ = 0;
     bool haveBaro_ = false;
+    float adaptiveGyroBias_[3] = {0, 0, 0};
+    float adaptiveGyroBiasCandidate_[3] = {0, 0, 0};
+    float adaptiveGyroBiasVariance_[3] = {0, 0, 0};
+    bool haveAdaptiveGyroBiasCandidate_ = false;
+    float adaptiveGyroBiasQualifyingTimeSec_ = 0;
 
     static float wrap180(float degrees);
     static float wrap360(float degrees);
@@ -243,4 +271,8 @@ private:
     float selectedClimbRate(uint32_t nowMs) const;
     void applyHeadingAiding(uint32_t nowMs, bool magneticHeadingUpdated = false);
     void updateRollCorrectionTarget(bool accelerometerResidualValid);
+    void updateAdaptiveGyroBias(float pDegSec, float qDegSec, float rDegSec,
+                                float accelX, float accelY, float accelZ,
+                                bool accelerometerValid, float dt,
+                                uint32_t nowUs);
 };

@@ -1120,9 +1120,14 @@ afterPrimaryImu:
     espnow.write(packet, true);
     Serial.print(packet);
     const AircraftAHRS::State &fused = ahrs.state(millis());
-    Serial.printf("AHRS roll=%.1f pitch=%.1f heading=%.1f baroAlt=%.1f climb=%.2f\n",
+    Serial.printf("AHRS roll=%.1f pitch=%.1f heading=%.1f baroAlt=%.1f climb=%.2f gyroBias=%s/%.1fs[%.4f,%.4f,%.4f]\n",
                   fused.rollDeg, fused.pitchDeg, fused.headingDeg,
-                  fused.fusedAltitudeM, fused.fusedClimbRateMps);
+                  fused.fusedAltitudeM, fused.fusedClimbRateMps,
+                  fused.adaptiveGyroBiasQualified ? "LEARN" : "HOLD",
+                  fused.adaptiveGyroBiasQualifyingTimeSec,
+                  fused.adaptiveGyroBiasXDegSec,
+                  fused.adaptiveGyroBiasYDegSec,
+                  fused.adaptiveGyroBiasZDegSec);
     const AircraftAHRS::State &displayState = ahrs.state(last);
     HalDisplayStatus status{
       gpsOk, imu1Healthy, imu2Healthy, baroOk, qmcOk || qmcPOk, sdOk, sessionLog.active(),

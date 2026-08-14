@@ -79,6 +79,15 @@ struct ReplayConfig {
             {"gyro_gain_z", &ahrs.gyroGainZ},
             {"gyro_rate_limit_deg_sec", &ahrs.gyroRateLimitDegSec},
             {"gyro_integration_dt_sec", &ahrs.gyroIntegrationDtSec},
+            {"adaptive_gyro_bias_qualification_sec", &ahrs.adaptiveGyroBiasQualificationTimeSec},
+            {"adaptive_gyro_bias_learning_sec", &ahrs.adaptiveGyroBiasLearningTimeSec},
+            {"adaptive_gyro_bias_mean_sec", &ahrs.adaptiveGyroBiasMeanTimeSec},
+            {"adaptive_gyro_bias_max_deg_sec", &ahrs.adaptiveGyroBiasMaximumDegSec},
+            {"adaptive_gyro_bias_max_body_rate_deg_sec", &ahrs.adaptiveGyroBiasMaximumBodyRateDegSec},
+            {"adaptive_gyro_bias_max_gps_track_rate_deg_sec", &ahrs.adaptiveGyroBiasMaximumGpsTrackRateDegSec},
+            {"adaptive_gyro_bias_max_stddev_deg_sec", &ahrs.adaptiveGyroBiasMaximumStdDevDegSec},
+            {"adaptive_gyro_bias_accel_tolerance_mps2", &ahrs.adaptiveGyroBiasAccelToleranceMps2},
+            {"adaptive_gyro_bias_stationary_speed_mps", &ahrs.adaptiveGyroBiasStationarySpeedMps},
             {"accel_bias_x_mps2", &ahrs.accelBiasXMps2},
             {"accel_bias_y_mps2", &ahrs.accelBiasYMps2},
             {"accel_bias_z_mps2", &ahrs.accelBiasZMps2},
@@ -151,6 +160,13 @@ struct ReplayConfig {
                    "gyro_axis_sign_x gyro_axis_sign_y gyro_axis_sign_z "
                    "gyro_rate_limit_deg_sec "
                    "gyro_integration_dt_sec "
+                   "adaptive_gyro_bias_qualification_sec adaptive_gyro_bias_learning_sec "
+                   "adaptive_gyro_bias_mean_sec adaptive_gyro_bias_max_deg_sec "
+                   "adaptive_gyro_bias_max_body_rate_deg_sec "
+                   "adaptive_gyro_bias_max_gps_track_rate_deg_sec "
+                   "adaptive_gyro_bias_max_stddev_deg_sec "
+                   "adaptive_gyro_bias_accel_tolerance_mps2 "
+                   "adaptive_gyro_bias_stationary_speed_mps "
                    "accel_bias_x_mps2 accel_bias_y_mps2 accel_bias_z_mps2 "
                    "vertical_rate_filter_sec "
                    "gps_timeout_sec accel_correction_sec accel_filter_sec "
