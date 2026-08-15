@@ -16,6 +16,11 @@ or recompiling between every trial:
 Parameters may be repeated in one invocation. Each later value replaces the
 earlier value. Unknown names are rejected. The command-line values affect the
 host replay only; they do not change the firmware or the HAL defaults.
+Version-2 logs select their source-controlled device profile automatically.
+For an older log, add `--device-mac 247C`, the full `28372FF8247C`, or the
+colon-separated MAC belonging to that capture. Abbreviations must be unique
+trailing suffixes of at least four hex digits; replay never guesses legacy
+calibration from a filename.
 
 ## How to tune safely
 

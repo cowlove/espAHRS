@@ -1,7 +1,7 @@
 # Board identity and log naming
 
-The filename and persistent sequence portions of this design are implemented.
-The richer board-profile and log-metadata portions remain future work.
+The filename, persistent sequence, source-controlled device-profile table, and
+versioned identity metadata record are implemented.
 
 ## Identity
 
@@ -31,8 +31,8 @@ digits.
 
 ## Calibration ownership
 
-1. HAL: board family, pins, buses, sensor drivers, and base conventions.
-2. Board profile: MAC-specific axis remaps, mounting rotation, offsets,
+1. HAL (`HardwareAbstraction.h`): board family, display, pins, buses, and capabilities.
+2. Device profile (`DeviceConfiguration.h`): full-MAC-specific axis remaps, mounting rotation, offsets,
    compass matrices, and calibration version.
 3. Log metadata: full MAC/profile identifier, HAL flavor, sensor identities,
    calibration revision, and log-format version.
@@ -44,7 +44,8 @@ use an explicit legacy-profile option rather than silent guessing.
 ## Migration and compatibility
 
 - Continue reading legacy `fusion-*.bin` names and the existing record format.
-- Add board/profile metadata to the log start event in a future format update.
+- Version-2 logs add a metadata record after `START`; all legacy records retain
+  their original type numbers and layouts.
 - Preserve an import/rename path for old files; do not infer board identity
   from filenames alone.
 - Keep LIST/DUMP filename handling opaque and validated, not tied to a fixed
@@ -52,5 +53,8 @@ use an explicit legacy-profile option rather than silent guessing.
 
 ## Remaining work
 
-The board-profile schema, metadata record ABI, calibration revision, and
-legacy replay override are not yet implemented.
+Replay automatically selects and verifies source configuration from version-2
+metadata. Legacy logs require `--device-mac`; `--hal` remains available for an
+explicit legacy/forensic board-family selection.
+`--device-mac` accepts full colon-separated or compact MACs and unique trailing
+hexadecimal suffixes of four or more digits.

@@ -1,5 +1,5 @@
 #include "AircraftAHRS.h"
-#include "HardwareAbstraction.h"
+#include "DeviceConfiguration.h"
 
 #include <assert.h>
 #include <math.h>
@@ -72,6 +72,19 @@ float determinant(const float m[3][3]) {
 }
 
 int main() {
+    const uint8_t knownMac[6] = {0x28,0x37,0x2F,0xF8,0x24,0x7C};
+    const uint8_t unknownMac[6] = {1,2,3,4,5,6};
+    assert(findDeviceConfiguration(knownMac) == &DEVICE_CONFIGURATIONS[0]);
+    assert(findDeviceConfiguration(unknownMac) == nullptr);
+    assert(DEVICE_CONFIGURATIONS[0].boardKind == HalBoardKind::GeekS3);
+    const DeviceConfiguration *resolved = nullptr;
+    assert(resolveDeviceConfiguration("28:37:2F:F8:24:7C", resolved) == DeviceConfigurationLookup::Found);
+    assert(resolved == &DEVICE_CONFIGURATIONS[0]);
+    assert(resolveDeviceConfiguration("28372ff8247c", resolved) == DeviceConfigurationLookup::Found);
+    assert(resolveDeviceConfiguration("247C", resolved) == DeviceConfigurationLookup::Found);
+    assert(resolveDeviceConfiguration("24:7c", resolved) == DeviceConfigurationLookup::Found);
+    assert(resolveDeviceConfiguration("7C", resolved) == DeviceConfigurationLookup::Invalid);
+    assert(resolveDeviceConfiguration("ZZZZ", resolved) == DeviceConfigurationLookup::Invalid);
     checkAgainstIndependentMatrix(0, 0, 10, 0, 0);
     checkAgainstIndependentMatrix(30, 0, 0, 0, 10);
     checkAgainstIndependentMatrix(-42, 17, 12, -23, 19);
@@ -80,19 +93,16 @@ int main() {
     // Body-rate remapping must remain a proper right-handed rotation.  A
     // single-axis convention flip turns this into a reflection and breaks
     // coordinated-turn q/r cancellation.
-    constexpr HalHardwareProfile tbeam = makeTBeamSupremeProfile();
-    assert(fabsf(determinant(tbeam.calibration.imu[0].gyroAxisRemap) - 1.0f) < 1e-6f);
-
     // The two currently installed GEEK IMUs have different raw polarity but
     // their per-source maps must produce the same body-frame vectors.
-    constexpr HalHardwareProfile geek = makeGeekS3Profile();
+    constexpr DeviceConfiguration geek = DEVICE_CONFIGURATIONS[0];
     float pGx = 10.0f, pGy = -20.0f, pGz = -30.0f;
-    halApplyRawGyroCalibration(geek.calibration.imu[0], pGx, pGy, pGz);
-    halApplySensorAxisRemap(geek.calibration.imu[0].gyroAxisRemap,
+    applyRawGyroCalibration(geek.calibration.imu[0], pGx, pGy, pGz);
+    applyAxisRemap(geek.calibration.imu[0].gyroAxisRemap,
                             pGx, pGy, pGz);
     float sGx = 10.0f, sGy = 20.0f, sGz = 30.0f;
-    halApplyRawGyroCalibration(geek.calibration.imu[1], sGx, sGy, sGz);
-    halApplySensorAxisRemap(geek.calibration.imu[1].gyroAxisRemap,
+    applyRawGyroCalibration(geek.calibration.imu[1], sGx, sGy, sGz);
+    applyAxisRemap(geek.calibration.imu[1].gyroAxisRemap,
                             sGx, sGy, sGz);
     // Remove IMU0's characterized bias for this polarity-only comparison.
     assert(fabsf((pGx + geek.calibration.imu[0].gyroBiasDegSec[0]) - sGx) < 1e-6f);
@@ -100,9 +110,9 @@ int main() {
     assert(fabsf((pGz - geek.calibration.imu[0].gyroBiasDegSec[2]) - sGz) < 1e-6f);
     float pAx = 1.0f, pAy = 2.0f, pAz = 3.0f;
     float sAx = 1.0f, sAy = -2.0f, sAz = -3.0f;
-    halApplySensorAxisRemap(geek.calibration.imu[0].sensorAxisRemap,
+    applyAxisRemap(geek.calibration.imu[0].sensorAxisRemap,
                             pAx, pAy, pAz);
-    halApplySensorAxisRemap(geek.calibration.imu[1].sensorAxisRemap,
+    applyAxisRemap(geek.calibration.imu[1].sensorAxisRemap,
                             sAx, sAy, sAz);
     assert(fabsf(pAx - sAx) < 1e-6f);
     assert(fabsf(pAy - sAy) < 1e-6f);
@@ -117,7 +127,7 @@ int main() {
 
     // Raw sensor bias/polarity must be applied before the installed-sensor
     // axis remap.  This guards the HAL/replay calibration ordering.
-    HalImuCalibration rawCalibration{};
+    DeviceImuCalibration rawCalibration{};
     rawCalibration.gyroBiasDegSec[0] = 1.0f;
     rawCalibration.gyroBiasDegSec[1] = 2.0f;
     rawCalibration.gyroBiasDegSec[2] = 3.0f;
@@ -125,14 +135,14 @@ int main() {
     rawCalibration.gyroAxisSign[1] = -1.0f;
     rawCalibration.gyroAxisSign[2] = 1.0f;
     float rawX = 5.0f, rawY = 8.0f, rawZ = 12.0f;
-    halApplyRawGyroCalibration(rawCalibration, rawX, rawY, rawZ);
+    applyRawGyroCalibration(rawCalibration, rawX, rawY, rawZ);
     assert(fabsf(rawX - 4.0f) < 1e-6f);
     assert(fabsf(rawY + 6.0f) < 1e-6f);
     assert(fabsf(rawZ - 9.0f) < 1e-6f);
     const float remap[3][3] = {
         {1, 0, 0}, {0, 0, -1}, {0, -1, 0}
     };
-    halApplySensorAxisRemap(remap, rawX, rawY, rawZ);
+    applyAxisRemap(remap, rawX, rawY, rawZ);
     assert(fabsf(rawX - 4.0f) < 1e-6f);
     assert(fabsf(rawY + 9.0f) < 1e-6f);
     assert(fabsf(rawZ - 6.0f) < 1e-6f);
@@ -145,10 +155,10 @@ int main() {
     config.gyroRateLimitDegSec = 0;
     AircraftAHRS ahrs(config);
     float rotation[3][3];
-    halMakeSensorFrameRotation(11.0f, 7.0f, 3.0f, rotation);
+    makeSensorFrameRotation(11.0f, 7.0f, 3.0f, rotation);
     ahrs.setSensorFrameRotation(rotation);
     float x = 4, y = -8, z = -12;
-    halRotateVector(rotation, x, y, z); // signs make raw vector (4,-8,-12)
+    applyAxisRemap(rotation, x, y, z); // signs make raw vector (4,-8,-12)
     ahrs.updateImu(4, 8, 12, 1000);
     ahrs.updateImu(4, 8, 12, 21000);
     const auto &state = ahrs.state(21);

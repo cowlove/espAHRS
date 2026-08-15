@@ -8,7 +8,7 @@ For the proposed standalone DipAHRS package scope and algorithm design, see
 For the literature and public-code background of the magnetic-vector roll
 observer, see [MAGNETIC_ROLL_PRIOR_ART.md](MAGNETIC_ROLL_PRIOR_ART.md).
 
-The planned board-identity, per-device calibration, and persistent log naming
+The board-identity, per-device calibration, and persistent log naming
 scheme is documented in [LOGGING_IDENTITY_PLAN.md](LOGGING_IDENTITY_PLAN.md).
 
 The espAHRS project is the flight-oriented AHRS and sensor-logging firmware
@@ -136,6 +136,18 @@ for the difference from the configured sensor ODR.
 The BerryIMUv3 LSM6DSL accelerometer and gyro run at 104 Hz for the nominal
 50 Hz application stream. Accelerometer LPF1 is set to ODR/4 (about 26 Hz);
 the gyro's fixed LPF2 is about 33 Hz at this ODR.
+
+Physical-device calibration is source-controlled in `DeviceConfiguration.h`
+and selected by the ESP32's full base MAC address. The HAL contains board
+wiring/display capabilities only. Replay uses the same table and accepts
+`--device-mac XX:XX:XX:XX:XX:XX`; unknown firmware MACs are reported and run
+with explicit identity calibration rather than borrowing another device's map.
+Version-2 logs record the HAL kind, full MAC, profile name, configuration
+revision, and deterministic calibration hash. Replay selects this profile
+automatically and rejects source/configuration drift. Older logs remain
+readable when their identity is supplied with `--device-mac`. That option
+accepts a colon-separated MAC, a 12-digit MAC, or a unique trailing suffix of
+at least four hexadecimal digits (for example `247C`).
 
 IMU calibration is indexed by the stable log source ID (`IMU0` through
 `IMU3`). Each source has independent accelerometer and gyro axis-remap

@@ -26,6 +26,7 @@ class FusionSessionLog {
     char fileName_[32] = {};
     char identityPrefix_[6] = {};
     char counterKey_[14] = {};
+    FusionLogMetadataRecord metadata_{};
 
     static bool isHex(char c) {
         return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'F') ||
@@ -67,11 +68,19 @@ class FusionSessionLog {
     void event(const char *s) { append(FUSION_LOG_EVENT, micros(), s, strlen(s)); }
 
 public:
-    void configureIdentity(char hal, const uint8_t mac[6]) {
+    void configureIdentity(char hal, const uint8_t mac[6], uint8_t halKind,
+                           const char *profileName, const char *revision,
+                           uint32_t configurationHash) {
         snprintf(identityPrefix_, sizeof(identityPrefix_), "%c%02X%02X",
                  hal, mac[4], mac[5]);
         snprintf(counterKey_, sizeof(counterKey_), "n%02X%02X%02X%02X%02X%02X",
                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        metadata_.formatVersion = FUSION_LOG_FORMAT_VERSION;
+        metadata_.halKind = halKind;
+        memcpy(metadata_.mac, mac, sizeof(metadata_.mac));
+        strncpy(metadata_.profileName, profileName, sizeof(metadata_.profileName)-1);
+        strncpy(metadata_.configurationRevision, revision, sizeof(metadata_.configurationRevision)-1);
+        metadata_.configurationHash = configurationHash;
     }
     static bool isLogFileName(const char *name) {
         const char *base = name && name[0] == '/' ? name + 1 : name;
@@ -150,6 +159,7 @@ private:
             active_ = false; vQueueDelete(queue_); queue_ = nullptr; file_.close(); return false;
         }
         event("START");
+        append(FUSION_LOG_METADATA, micros(), &metadata_, sizeof(metadata_));
         return true;
     }
 

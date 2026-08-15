@@ -45,7 +45,7 @@ include ${ALIBS}/makeEspArduino/makeEspArduino.mk
 cat:
 	while sleep .01; do if [ -c ${PORT} ]; then stty -F ${PORT} -echo raw 115200 && cat ${PORT}; fi; done | tee ./cat.`basename ${PORT}`.out
 
-.PHONY: replay flight-results dipahrs-test ahrs-kinematics-test
+.PHONY: replay flight-results dipahrs-test ahrs-kinematics-test log-metadata-test
 replay:
 	$(CXX) -std=c++17 -O2 -I. replay.cpp AircraftAHRS.cpp -o replay
 
@@ -53,7 +53,8 @@ flight-results: replay
 	@mkdir -p flight-data-primary/results
 	@for log in flight-data-primary/flight-data-*.bin; do \
 		base=$$(basename $$log .bin); \
-		./replay $$log --roll-csv flight-data-primary/results/$${base}-roll.csv \
+		./replay $$log --device-mac 247C \
+			--roll-csv flight-data-primary/results/$${base}-roll.csv \
 			--pitch-csv flight-data-primary/results/$${base}-pitch.csv >/dev/null; \
 	done
 
@@ -64,3 +65,9 @@ dipahrs-test:
 ahrs-kinematics-test:
 	$(CXX) -std=c++17 -O2 -I. aircraft_ahrs_kinematics_test.cpp AircraftAHRS.cpp -o /tmp/esp32-s3-geek-ahrs-kinematics-test
 	/tmp/esp32-s3-geek-ahrs-kinematics-test
+
+log-metadata-test: replay
+	$(CXX) -std=c++17 -O2 -I. fusion_log_metadata_test.cpp -o /tmp/espahrs-log-metadata-test
+	/tmp/espahrs-log-metadata-test
+	./replay /tmp/espahrs-metadata-v2.bin >/dev/null
+	! ./replay /tmp/espahrs-metadata-v2-stale.bin >/dev/null 2>&1

@@ -85,25 +85,84 @@ static void rotateVector(const float m[3][3], float &x, float &y, float &z) {
     x = a; y = b; z = c;
 }
 
+static bool readLogMetadata(const char *path, FusionLogMetadataRecord &metadata) {
+    std::ifstream in(path, std::ios::binary);
+    ReplayHeader h{};
+    while (in.read(reinterpret_cast<char *>(&h), sizeof(h))) {
+        if (h.magic != LogMagic || h.payloadLength > 512) return false;
+        uint8_t payload[512]{};
+        if (!in.read(reinterpret_cast<char *>(payload), h.payloadLength)) return false;
+        if (h.type == FUSION_LOG_METADATA) {
+            if (h.payloadLength != sizeof(metadata)) return false;
+            std::memcpy(&metadata, payload, sizeof(metadata));
+            return metadata.formatVersion >= 2;
+        }
+    }
+    return false;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s session.bin [--hal geek|tbeam] [--axis-remap 9 values] [--gyro-axis-remap 9 values] [--param name=value] [--roll-csv FILE] [--pitch-csv FILE] [--imu-csv FILE] [--list-params]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s session.bin [--device-mac MAC_OR_UNIQUE_SUFFIX] [--hal geek|tbeam] [--axis-remap 9 values] [--gyro-axis-remap 9 values] [--param name=value] [--roll-csv FILE] [--pitch-csv FILE] [--imu-csv FILE] [--list-params]\n", argv[0]);
         return 2;
     }
     enum class ReplayHal { Geek, TBeam } replayHal = ReplayHal::Geek;
-    // Select the base profile before constructing ReplayConfig.  Parameter
+    bool explicitHal = false, explicitDevice = false;
+    FusionLogMetadataRecord logMetadata{};
+    const bool hasLogMetadata = readLogMetadata(argv[1], logMetadata);
+    const DeviceConfiguration *deviceProfile = nullptr;
+    // Select the device profile before constructing ReplayConfig. Parameter
     // overrides are parsed afterward, so they still take precedence.
     for (int i = 2; i < argc; ++i) {
         if (std::strcmp(argv[i], "--hal") == 0 && i + 1 < argc) {
+            explicitHal = true;
             const char *name = argv[++i];
             if (std::strcmp(name, "geek") == 0) replayHal = ReplayHal::Geek;
             else if (std::strcmp(name, "tbeam") == 0) replayHal = ReplayHal::TBeam;
             else { std::fprintf(stderr, "unknown HAL: %s\n", name); return 2; }
+        } else if (std::strcmp(argv[i], "--device-mac") == 0 && i + 1 < argc) {
+            explicitDevice = true;
+            const char *requested = argv[++i];
+            DeviceConfigurationLookup lookup=resolveDeviceConfiguration(requested, deviceProfile);
+            if (lookup != DeviceConfigurationLookup::Found) {
+                const char *reason = lookup == DeviceConfigurationLookup::Ambiguous ? "ambiguous" :
+                    lookup == DeviceConfigurationLookup::Unknown ? "unknown" : "invalid";
+                std::fprintf(stderr, "%s device MAC or suffix: %s\n", reason, requested); return 2;
+            }
+        }
+    }
+    if (!explicitDevice) {
+        if (!hasLogMetadata) {
+            std::fprintf(stderr, "legacy log has no device metadata; specify --device-mac MAC_OR_UNIQUE_SUFFIX\n");
+            return 2;
+        }
+        deviceProfile = findDeviceConfiguration(logMetadata.mac);
+        if (!deviceProfile) {
+            std::fprintf(stderr, "log metadata references an unknown device MAC\n"); return 2;
+        }
+    }
+    if (hasLogMetadata && !explicitHal) {
+        if (logMetadata.halKind == static_cast<uint8_t>(HalBoardKind::GeekS3)) replayHal=ReplayHal::Geek;
+        else if (logMetadata.halKind == static_cast<uint8_t>(HalBoardKind::TBeamSupreme)) replayHal=ReplayHal::TBeam;
+        else { std::fprintf(stderr, "unknown HAL kind in log metadata\n"); return 2; }
+    }
+    if (hasLogMetadata && !explicitDevice) {
+        if (std::strncmp(logMetadata.configurationRevision, deviceProfile->revision,
+                         sizeof(logMetadata.configurationRevision)) != 0 ||
+            logMetadata.configurationHash != deviceConfigurationHash(*deviceProfile)) {
+            std::fprintf(stderr, "source configuration does not match log metadata revision/hash\n");
+            return 2;
         }
     }
     const HalHardwareProfile hardware = replayHal == ReplayHal::TBeam
         ? makeTBeamSupremeProfile() : makeGeekS3Profile();
-    ReplayConfig replayConfig(hardware);
+    if (deviceProfile->boardKind != hardware.kind) {
+        std::fprintf(stderr, "device profile %s does not match selected HAL %s\n",
+                     deviceProfile->name, hardware.name);
+        return 2;
+    }
+    DeviceConfiguration selectedDevice = *deviceProfile;
+    ReplayConfig replayConfig(selectedDevice);
     bool axisRemapOverride = false;
     float axisRemap[3][3]{};
     bool gyroAxisRemapOverride = false;
@@ -120,6 +179,7 @@ int main(int argc, char **argv) {
             else { std::fprintf(stderr, "unknown HAL: %s\n", name); return 2; }
             continue;
         }
+        if (std::strcmp(argv[i], "--device-mac") == 0 && i + 1 < argc) { ++i; continue; }
         if (std::strcmp(argv[i], "--axis-remap") == 0 && i + 9 < argc) {
             for (int row = 0; row < 3; ++row)
                 for (int column = 0; column < 3; ++column)
@@ -174,30 +234,29 @@ int main(int argc, char **argv) {
     if (!in) { std::perror(argv[1]); return 1; }
 
     AircraftAHRS ahrs(replayConfig.ahrs);
-    HalHardwareProfile selectedHardware = hardware;
     if (axisRemapOverride)
-        std::memcpy(selectedHardware.calibration.imu[replayConfig.selectedImuSource].sensorAxisRemap,
+        std::memcpy(selectedDevice.calibration.imu[replayConfig.selectedImuSource].sensorAxisRemap,
                     axisRemap, sizeof(axisRemap));
     if (gyroAxisRemapOverride)
-        std::memcpy(selectedHardware.calibration.imu[replayConfig.selectedImuSource].gyroAxisRemap,
+        std::memcpy(selectedDevice.calibration.imu[replayConfig.selectedImuSource].gyroAxisRemap,
                     gyroAxisRemap, sizeof(gyroAxisRemap));
-    ahrs.setCompassCalibration(0, hardware.calibration.compass[0].offset,
-                               hardware.calibration.compass[0].matrix);
-    ahrs.setCompassCalibration(1, hardware.calibration.compass[1].offset,
-                               hardware.calibration.compass[1].matrix);
+    ahrs.setCompassCalibration(0, selectedDevice.calibration.compass[0].offset,
+                               selectedDevice.calibration.compass[0].matrix);
+    ahrs.setCompassCalibration(1, selectedDevice.calibration.compass[1].offset,
+                               selectedDevice.calibration.compass[1].matrix);
     float sensorFrameRotation[3][3];
-    halMakeSensorFrameRotation(replayConfig.sensorPitchOffsetDeg,
+    makeSensorFrameRotation(replayConfig.sensorPitchOffsetDeg,
                                replayConfig.sensorRollOffsetDeg,
                                replayConfig.sensorYawOffsetDeg,
                                sensorFrameRotation);
     ahrs.setSensorFrameRotation(sensorFrameRotation);
     float compassFrameRotation[3][3];
-    halMultiplyMatrix(sensorFrameRotation,
-                      hardware.calibration.compass[0].frameRotation,
+    multiplyMatrix(sensorFrameRotation,
+                      selectedDevice.calibration.compass[0].frameRotation,
                       compassFrameRotation);
     ahrs.setCompassFrameRotation(0, compassFrameRotation);
-    halMultiplyMatrix(sensorFrameRotation,
-                      hardware.calibration.compass[1].frameRotation,
+    multiplyMatrix(sensorFrameRotation,
+                      selectedDevice.calibration.compass[1].frameRotation,
                       compassFrameRotation);
     ahrs.setCompassFrameRotation(1, compassFrameRotation);
     uint64_t records = 0, bytes = 0;
@@ -276,11 +335,11 @@ int main(int argc, char **argv) {
                       replayConfig.rawGyroAxisSign[1];
             r.gyroZ = (r.gyroZ - replayConfig.rawGyroBiasDegSec[2]) *
                       replayConfig.rawGyroAxisSign[2];
-            const HalImuCalibration &imuCalibration =
-                selectedHardware.calibration.imu[replayConfig.selectedImuSource];
-            halApplySensorAxisRemap(imuCalibration.gyroAxisRemap,
+            const DeviceImuCalibration &imuCalibration =
+                selectedDevice.calibration.imu[replayConfig.selectedImuSource];
+            applyAxisRemap(imuCalibration.gyroAxisRemap,
                                     r.gyroX, r.gyroY, r.gyroZ);
-            halApplySensorAxisRemap(imuCalibration.sensorAxisRemap,
+            applyAxisRemap(imuCalibration.sensorAxisRemap,
                                     r.accelX, r.accelY, r.accelZ);
             lastRawPitchGyroDegSec = r.gyroY;
             ahrs.updateImu(r.gyroX, r.gyroY, r.gyroZ,

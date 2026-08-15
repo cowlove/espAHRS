@@ -27,8 +27,10 @@
 #include "FusionSessionLog.h"
 #include "SharedUbloxGPS.h"
 #include "HardwareAbstraction.h"
+#include "DeviceConfiguration.h"
 
 HalHardwareProfile HARDWARE = makeGeekS3Profile();
+const DeviceConfiguration *DEVICE_CONFIG = &DEVICE_CONFIGURATIONS[0];
 constexpr HalImuRequest REQUESTED_IMU = {50.0f, 20.0f};
 HalImuConfiguration actualImu = {0, 0, 0.02f, 0, false};
 struct IcmRateProfile {
@@ -220,7 +222,7 @@ HalDisplayStatus latestDisplayStatus{};
 SharedUbloxGPS sharedGps;
 static AircraftAHRS::Config makeAhrsConfigFromHal() {
   AircraftAHRS::Config config;
-  const HalImuCalibration &calibration = HARDWARE.calibration.imu[0];
+  const DeviceImuCalibration &calibration = DEVICE_CONFIG->calibration.imu[0];
   // Raw gyro bias and polarity belong to the sensor frame and are applied
   // immediately before gyroAxisRemap at the sample call site.  AircraftAHRS
   // therefore receives already-remapped body rates with neutral raw-axis
@@ -400,7 +402,9 @@ void setupStorage() {
   if (!HARDWARE.hasSd) return;
   uint8_t mac[6]{};
   esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  sessionLog.configureIdentity('G', mac);
+  sessionLog.configureIdentity('G', mac, static_cast<uint8_t>(HARDWARE.kind),
+      DEVICE_CONFIG->name, DEVICE_CONFIG->revision,
+      deviceConfigurationHash(*DEVICE_CONFIG));
   sdSpi.begin(HARDWARE.sdSck, HARDWARE.sdMiso, HARDWARE.sdMosi);
   sdOk = SD.begin(HARDWARE.sdCs, sdSpi, 20000000);
   if (sdOk) sessionLog.recoverLatest(SD);
@@ -921,27 +925,41 @@ void setup() {
   HARDWARE = detectBoard() == HalBoardKind::TBeamSupreme
       ? makeTBeamSupremeProfile() : makeGeekS3Profile();
   Serial.printf("HAL board auto-detect: %s\n", HARDWARE.name);
+  uint8_t deviceMac[6];
+  esp_read_mac(deviceMac, ESP_MAC_WIFI_STA);
+  DEVICE_CONFIG = findDeviceConfiguration(deviceMac);
+  if (!DEVICE_CONFIG) {
+    DEVICE_CONFIG = &UNCALIBRATED_DEVICE_CONFIGURATION;
+    Serial.printf("DEVICE CONFIG UNKNOWN MAC=%02X:%02X:%02X:%02X:%02X:%02X; using identity calibration\n",
+                  deviceMac[0],deviceMac[1],deviceMac[2],deviceMac[3],deviceMac[4],deviceMac[5]);
+  } else if (DEVICE_CONFIG->boardKind != HARDWARE.kind) {
+    Serial.printf("DEVICE CONFIG BOARD MISMATCH config=%s hal=%s; using identity calibration\n",
+                  DEVICE_CONFIG->name, HARDWARE.name);
+    DEVICE_CONFIG = &UNCALIBRATED_DEVICE_CONFIGURATION;
+  } else {
+    Serial.printf("DEVICE CONFIG %s revision=%s\n", DEVICE_CONFIG->name, DEVICE_CONFIG->revision);
+  }
   // The global AHRS is constructed before runtime board detection, when the
   // provisional profile is GEEK. Reconstruct it from the detected profile so
   // per-board bias, polarity, and acceleration calibration cannot leak across
   // hardware variants.
   ahrs = AircraftAHRS(makeAhrsConfigFromHal());
   if (HARDWARE.hasLogButton) pinMode(HARDWARE.logButton, INPUT_PULLUP);
-  halMakeSensorFrameRotation(HARDWARE.calibration.imu[0].sensorPitchOffsetDeg,
-                             HARDWARE.calibration.imu[0].sensorRollOffsetDeg,
-                             HARDWARE.calibration.imu[0].sensorYawOffsetDeg,
+  makeSensorFrameRotation(DEVICE_CONFIG->calibration.imu[0].sensorPitchOffsetDeg,
+                             DEVICE_CONFIG->calibration.imu[0].sensorRollOffsetDeg,
+                             DEVICE_CONFIG->calibration.imu[0].sensorYawOffsetDeg,
                              sensorFrameRotation);
   ahrs.setSensorFrameRotation(sensorFrameRotation);
-  ahrs.setCompassCalibration(0, HARDWARE.calibration.compass[0].offset,
-                             HARDWARE.calibration.compass[0].matrix);
-  ahrs.setCompassCalibration(1, HARDWARE.calibration.compass[1].offset,
-                             HARDWARE.calibration.compass[1].matrix);
+  ahrs.setCompassCalibration(0, DEVICE_CONFIG->calibration.compass[0].offset,
+                             DEVICE_CONFIG->calibration.compass[0].matrix);
+  ahrs.setCompassCalibration(1, DEVICE_CONFIG->calibration.compass[1].offset,
+                             DEVICE_CONFIG->calibration.compass[1].matrix);
   float compassFrameRotation[3][3];
-  halMultiplyMatrix(sensorFrameRotation,
-      HARDWARE.calibration.compass[0].frameRotation, compassFrameRotation);
+  multiplyMatrix(sensorFrameRotation,
+      DEVICE_CONFIG->calibration.compass[0].frameRotation, compassFrameRotation);
   ahrs.setCompassFrameRotation(0, compassFrameRotation);
-  halMultiplyMatrix(sensorFrameRotation,
-      HARDWARE.calibration.compass[1].frameRotation, compassFrameRotation);
+  multiplyMatrix(sensorFrameRotation,
+      DEVICE_CONFIG->calibration.compass[1].frameRotation, compassFrameRotation);
   ahrs.setCompassFrameRotation(1, compassFrameRotation);
 #if defined(TBEAM_QMI_RELEASE_AFTER_INIT)
   setupDisplay(); setupStorage(); setupBerryIMU();
@@ -1049,12 +1067,12 @@ void loop() {
     // aircraft-axis remap only to the values entering the AHRS.
     float bodyGx = gx, bodyGy = gy, bodyGz = gz;
     float bodyAx = ax, bodyAy = ay, bodyAz = az;
-    const HalImuCalibration &imuCalibration = HARDWARE.calibration.imu[0];
-    halApplyRawGyroCalibration(imuCalibration,
+    const DeviceImuCalibration &imuCalibration = DEVICE_CONFIG->calibration.imu[0];
+    applyRawGyroCalibration(imuCalibration,
                                bodyGx, bodyGy, bodyGz);
-    halApplySensorAxisRemap(imuCalibration.gyroAxisRemap,
+    applyAxisRemap(imuCalibration.gyroAxisRemap,
                             bodyGx, bodyGy, bodyGz);
-    halApplySensorAxisRemap(imuCalibration.sensorAxisRemap,
+    applyAxisRemap(imuCalibration.sensorAxisRemap,
                             bodyAx, bodyAy, bodyAz);
     ahrs.updateImu(bodyGx, bodyGy, bodyGz, nowUs,
                    bodyAx, bodyAy, bodyAz, imuSampleValid);
