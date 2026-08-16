@@ -180,3 +180,11 @@ utility with its required confirmation flag:
 ```sh
 ./erase_logs.py --port /dev/ttyACM0 --yes
 ```
+
+Download all device logs, or select files with shell-style globs (quote globs
+so the local shell does not expand them):
+
+```sh
+./download_logs.py --port /dev/ttyACM0 --output-dir downloaded
+./download_logs.py 'G247C0*.bin' fusion-9556.bin
+```
