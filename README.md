@@ -160,3 +160,23 @@ GEEK `IMU1` mapping describes the temporary BerryIMUv3 mounting measured by
 During recording, the Geek display shows `LOG <seconds>s` next to the active
 logging indicator. The elapsed value comes from the current session's start
 time and resets for every new file.
+
+### Timed capture and stream-health summary
+
+Use `capture_and_analyze.py` to start a session, record for 20 seconds, stop
+and download the newest log, then print per-stream rates and timestamp gaps:
+
+```sh
+./capture_and_analyze.py --port /dev/ttyACM0 --duration 20
+```
+
+The output file can be selected with `--output`; the port and duration are
+optional and default to `/dev/ttyACM0` and 20 seconds. The script requires
+`pyserial` and uses the firmware's CRC-checked `DUMP` protocol.
+
+To erase all `.bin` logs from the SD card, use the separate destructive
+utility with its required confirmation flag:
+
+```sh
+./erase_logs.py --port /dev/ttyACM0 --yes
+```
