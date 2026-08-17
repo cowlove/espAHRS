@@ -118,11 +118,12 @@ int main() {
     assert(fabsf(pAy - sAy) < 1e-6f);
     assert(fabsf(pAz - sAz) < 1e-6f);
 
-    // In aircraft X-forward/Z-down coordinates, a nose-up gravity vector has
-    // negative X.  The public/internal pitch observation must be positive.
+    // The active GEEK/ICM data convention has positive aircraft-X gravity
+    // tilt for positive nose-up pitch.  Guard against reintroducing the
+    // abandoned T-Beam/QMI sign convention into shared AHRS code.
     AircraftAHRS pitchConvention;
-    pitchConvention.updateImu(0, 0, 0, 1000, -1.7029f, 0, 9.6577f, true);
-    pitchConvention.updateImu(0, 0, 0, 21000, -1.7029f, 0, 9.6577f, true);
+    pitchConvention.updateImu(0, 0, 0, 1000, 1.7029f, 0, 9.6577f, true);
+    pitchConvention.updateImu(0, 0, 0, 21000, 1.7029f, 0, 9.6577f, true);
     assert(pitchConvention.state(21).accelerometerPitchDeg > 9.5f);
 
     // Raw sensor bias/polarity must be applied before the installed-sensor
