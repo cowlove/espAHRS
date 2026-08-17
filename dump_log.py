@@ -63,7 +63,9 @@ def main() -> int:
                     help="overall transfer timeout in seconds")
     ap.add_argument("--trace", help="write protocol trace lines to this file")
     ap.add_argument("--resume", action="store_true", help="resume an existing .part file")
-    ap.add_argument("--attempts", type=int, default=8)
+    ap.add_argument("--attempts", type=int, default=20)
+    ap.add_argument("--baud", type=int, default=115200,
+                    help="serial baud rate (default: 115200)")
     ap.add_argument("--request-delay", type=float, default=0.005,
                     help="settling delay after each GET (seconds)")
     ap.add_argument("--transaction-timeout", type=float, default=5.0,
@@ -81,7 +83,7 @@ def main() -> int:
         if existing % chunk_size: raise RuntimeError("partial file is not chunk aligned")
         seq = existing // chunk_size
         try:
-            with serial.Serial(args.port, 115200, timeout=2) as ser:
+            with serial.Serial(args.port, args.baud, timeout=2) as ser:
                 overall_deadline = started + args.timeout
                 # A reconnect can leave status or a previous transfer's terminal
                 # error queued in USB CDC. Only responses to this session count.

@@ -59,6 +59,8 @@ def main():
                     help="settling delay after each chunk request (default: 0.25s)")
     ap.add_argument("--transaction-timeout", type=float, default=15.0,
                     help="timeout for one chunk transaction (default: 15s)")
+    ap.add_argument("--attempts", type=int, default=20,
+                    help="transfer retries per file (default: 20)")
     args = ap.parse_args()
     try:
         os.makedirs(args.output_dir, exist_ok=True)
@@ -81,8 +83,10 @@ def main():
                             "--port", args.port,
                             "--file", name, "--output", output,
                             "--timeout", str(args.timeout),
+                            "--baud", str(args.baud),
                             "--request-delay", str(args.request_delay),
-                            "--transaction-timeout", str(args.transaction_timeout)], check=True)
+                            "--transaction-timeout", str(args.transaction_timeout),
+                            "--attempts", str(args.attempts)], check=True)
             print("[%d/%d] completed %s" % (index, len(files), name), flush=True)
         print("download complete: %d file%s" %
               (len(files), "" if len(files) == 1 else "s"))
