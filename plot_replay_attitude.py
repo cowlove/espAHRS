@@ -83,9 +83,9 @@ def main():
         time_pitch = read_column(pitch_csv, "time_s")
         g5_pitch = read_column(pitch_csv, "g5_pitch")
         ahrs_pitch = read_column(pitch_csv, "ahrs_pitch")
-    time_roll = read_column(roll_csv, "time_s")
+        time_roll = read_column(roll_csv, "time_s")
         g5_roll = read_column(roll_csv, "g5_roll")
-    ahrs_roll = read_column(roll_csv, "ahrs_roll")
+        ahrs_roll = read_column(roll_csv, "ahrs_roll")
 
     g5_time_pitch, g5_pitch = finite_series(time_pitch, g5_pitch)
     g5_time_roll, g5_roll = finite_series(time_roll, g5_roll)
