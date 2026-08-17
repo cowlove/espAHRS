@@ -6,19 +6,23 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 import serial
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 
-def list_logs(port, baud):
+def list_logs(port, baud, timeout=15.0):
     with serial.Serial(port, baud, timeout=0.5) as ser:
         ser.reset_input_buffer()
         ser.write(b"LIST\n")
         ser.flush()
         files = []
+        deadline = time.monotonic() + timeout
         while True:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("timed out waiting for device log inventory")
             line = ser.readline()
             if not line:
                 continue
@@ -26,7 +30,7 @@ def list_logs(port, baud):
             match = re.match(r"LOG_LIST_FILE name=(\S+) size=(\d+)", text)
             if match:
                 files.append((match.group(1), int(match.group(2))))
-            if text == "LOG_LIST_END":
+            if text.startswith("LOG_LIST_END"):
                 return files
             if text.startswith("LOG_ERROR"):
                 raise RuntimeError(text)
@@ -64,7 +68,7 @@ def main():
     args = ap.parse_args()
     try:
         os.makedirs(args.output_dir, exist_ok=True)
-        available = list_logs(args.port, args.baud)
+        available = list_logs(args.port, args.baud, args.transaction_timeout)
         print("device log inventory (%d file%s):" %
               (len(available), "" if len(available) == 1 else "s"))
         for name, size in available:
