@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import math
+import re
 
 
 def read_column(path, name):
@@ -77,8 +78,18 @@ def main():
         roll_csv = os.path.join(temp, "roll.csv")
         command = [replay, args.bin_file, "--hal", args.hal,
                    "--pitch-csv", pitch_csv, "--roll-csv", roll_csv] + params
-        if args.device_mac:
-            command += ["--device-mac", args.device_mac]
+        device_mac = args.device_mac
+        if not device_mac:
+            # Logger-generated names encode the final four MAC digits, e.g.
+            # G247C015.bin.  Supplying that unique suffix intentionally uses
+            # the current calibration when replaying logs from an older
+            # recorded configuration revision.
+            match = re.fullmatch(r"[GT]([0-9A-Fa-f]{4})[0-9]+\.bin",
+                                 os.path.basename(args.bin_file))
+            if match:
+                device_mac = match.group(1)
+        if device_mac:
+            command += ["--device-mac", device_mac]
         result = subprocess.run(command, text=True, capture_output=True)
         if result.returncode:
             sys.stderr.write(result.stdout)
