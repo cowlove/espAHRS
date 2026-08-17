@@ -850,7 +850,7 @@ void setupGPS() {
                   HARDWARE.gpsRx, HARDWARE.gpsTx);
     return;
   }
-  gpsOk = sharedGps.configure(38400, 10);
+  gpsOk = sharedGps.configure(38400, 10, 1000);
   Serial.printf("GPS config: UBX/NAV10/PVT=%s baud=%lu\n",
                 gpsOk ? "OK" : "FAIL", (unsigned long)sharedGps.baud);
 }
