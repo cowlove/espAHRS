@@ -55,6 +55,10 @@ def main():
                     help="local destination directory (default: current directory)")
     ap.add_argument("--timeout", type=float, default=300.0,
                     help="per-file transfer timeout in seconds")
+    ap.add_argument("--request-delay", type=float, default=0.25,
+                    help="settling delay after each chunk request (default: 0.25s)")
+    ap.add_argument("--transaction-timeout", type=float, default=15.0,
+                    help="timeout for one chunk transaction (default: 15s)")
     args = ap.parse_args()
     try:
         os.makedirs(args.output_dir, exist_ok=True)
@@ -76,7 +80,9 @@ def main():
             subprocess.run([sys.executable, os.path.join(ROOT, "dump_log.py"),
                             "--port", args.port,
                             "--file", name, "--output", output,
-                            "--timeout", str(args.timeout)], check=True)
+                            "--timeout", str(args.timeout),
+                            "--request-delay", str(args.request_delay),
+                            "--transaction-timeout", str(args.transaction_timeout)], check=True)
             print("[%d/%d] completed %s" % (index, len(files), name), flush=True)
         print("download complete: %d file%s" %
               (len(files), "" if len(files) == 1 else "s"))
