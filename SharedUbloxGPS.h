@@ -26,10 +26,23 @@ public:
             while (serial->available()) { serial->read(); ++rawBytes; }
             delay(2);
         }
-        // The library's debug stream prints the UBX commands and ACK/NAK
-        // responses, which is the only reliable way to distinguish a silent
-        // UART-TX failure from a receiver-side rejection here.
-        gnss.enableDebugging(Serial, false);
+        gnss.disableDebugging();
+        static const uint8_t cfgPrtPoll[] = {0xB5, 0x62, 0x06, 0x00,
+                                               0x01, 0x00, 0x01, 0x08, 0x21};
+        serial->write(cfgPrtPoll, sizeof(cfgPrtPoll));
+        serial->flush();
+        uint8_t response[96]; size_t responseLength = 0;
+        uint32_t responseUntil = millis() + 500;
+        while ((int32_t)(millis() - responseUntil) < 0) {
+            while (serial->available() && responseLength < sizeof(response))
+                response[responseLength++] = (uint8_t)serial->read();
+            delay(2);
+        }
+        Serial.printf("GNSS raw CFG-PRT poll response bytes=%u:",
+                      (unsigned)responseLength);
+        for (size_t i = 0; i < responseLength; ++i)
+            Serial.printf(" %02X", response[i]);
+        Serial.println();
         bool ok = gnss.begin(*serial);
         Serial.printf("GNSS probe baud=%lu raw_bytes=%u ubx=%s\n",
                       (unsigned long)candidate, (unsigned)rawBytes,
