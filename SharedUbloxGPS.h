@@ -53,17 +53,30 @@ public:
     bool configure(uint32_t targetBaud, uint8_t navFrequencyHz,
                    uint16_t timeoutMs = 100) {
         if (!gpsGood || !serial) return false;
+        Serial.printf("GNSS config begin baud=%lu target_baud=%lu nav_hz=%u timeout_ms=%u rx=%d tx=%d\n",
+                      (unsigned long)baud, (unsigned long)targetBaud,
+                      (unsigned)navFrequencyHz, (unsigned)timeoutMs, rxPin, txPin);
         bool ubxOk = gnss.setUART1Output(COM_TYPE_UBX, timeoutMs);
+        Serial.printf("GNSS config setUART1Output=%s\n", ubxOk ? "OK" : "FAIL");
         bool navOk = gnss.setNavigationFrequency(navFrequencyHz, timeoutMs);
+        Serial.printf("GNSS config setNavigationFrequency=%s\n", navOk ? "OK" : "FAIL");
         bool pvtOk = gnss.setAutoPVT(true, true, timeoutMs);
-        if (!ubxOk || !navOk || !pvtOk) return false;
+        Serial.printf("GNSS config setAutoPVT=%s\n", pvtOk ? "OK" : "FAIL");
+        if (!ubxOk || !navOk || !pvtOk) {
+            Serial.println("GNSS config failed before baud/save step");
+            return false;
+        }
 
         if (baud != targetBaud) {
             gnss.setSerialRate(targetBaud, COM_PORT_UART1, timeoutMs);
+            Serial.println("GNSS config setSerialRate=ISSUED");
             serial->begin(targetBaud, SERIAL_8N1, rxPin, txPin);
             baud = targetBaud;
         }
-        return gnss.saveConfiguration();
+        bool saveOk = gnss.saveConfiguration();
+        Serial.printf("GNSS config saveConfiguration=%s final_baud=%lu\n",
+                      saveOk ? "OK" : "FAIL", (unsigned long)baud);
+        return saveOk;
     }
 
     bool check(uint32_t timeoutMs = 10) {
