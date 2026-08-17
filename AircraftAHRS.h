@@ -65,6 +65,9 @@ public:
         float pitchGravityCorrectionTimeSec = 12.0f;
         float accelFilterTimeSec = 0.25f;
         float accelMagnitudeToleranceMps2 = 1.5f;
+        // Smoothly fade the accelerometer's roll-target contribution when
+        // acceleration magnitude leaves the trusted 1-g envelope.
+        float accelerometerRollConfidenceTimeSec = 0.5f;
         // The three independent turn-rate bank estimates are normalized by
         // the sum of the weights for the currently valid sources.
         float gpsTurnRateBankWeight = 1.0f;
@@ -146,6 +149,7 @@ public:
         bool compassAidingValid = false;
         bool accelerometerAidingValid = false;
         bool accelerometerSampleAccepted = false;
+        float accelerometerRollConfidence = 0.0f;
         bool gpsLongitudinalAccelerationValid = false;
         bool gpsLongitudinalCompensationValid = false;
         bool magneticRollAidingValid = false;
@@ -265,6 +269,7 @@ private:
     float filteredAccelX_ = 0;
     float filteredAccelY_ = 0;
     float filteredAccelZ_ = -9.80665f;
+    float accelerometerRollConfidence_ = 0.0f;
     bool haveAccel_ = false;
     uint32_t lastAcceptedAccelUs_ = 0;
     uint32_t lastAccelAidingUs_ = 0;
@@ -281,6 +286,6 @@ private:
     static float correctionFraction(float dt, float timeConstant);
     float selectedClimbRate(uint32_t nowMs) const;
     void applyHeadingAiding(uint32_t nowMs, bool magneticHeadingUpdated = false);
-    void updateRollCorrectionTarget(bool accelerometerResidualValid);
+    void updateRollCorrectionTarget(float accelerometerConfidence);
     void updateAdaptiveGyroBias(float dt);
 };

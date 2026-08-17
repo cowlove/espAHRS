@@ -44,13 +44,13 @@ constexpr DeviceImuCalibration identityImuCalibration() {
 // Physical GEEK unit 28:37:2F:F8:24:7C. Numeric values are intentionally
 // source-controlled so firmware, replay, simulation, and sweeps share them.
 constexpr DeviceConfiguration DEVICE_CONFIGURATIONS[] = {{
-  {0x28, 0x37, 0x2F, 0xF8, 0x24, 0x7C}, "geek-247c", "geek-247c-r1",
+  {0x28, 0x37, 0x2F, 0xF8, 0x24, 0x7C}, "geek-247c", "geek-247c-r2",
   HalBoardKind::GeekS3,
   {{
-    {10.3f, 7.5f, 0.0f, {-0.48f,0.05f,0.16f}, {1,-1,-1},
+    {0.0f, 0.0f, 0.0f, {-0.48f,0.05f,0.16f}, {1,-1,-1},
      {-0.002f,-0.019f,0.222f}, false,
      {{1,0,0},{0,1,0},{0,0,1}}, {{1,0,0},{0,1,0},{0,0,1}}},
-    {10.3f, 7.5f, 0.0f, {0,0,0}, {1,1,1}, {0,0,0}, false,
+    {0.0f, 0.0f, 0.0f, {0,0,0}, {1,1,1}, {0,0,0}, false,
      {{1,0,0},{0,-1,0},{0,0,-1}}, {{1,0,0},{0,1,0},{0,0,1}}},
     identityImuCalibration(), identityImuCalibration()
   }, {

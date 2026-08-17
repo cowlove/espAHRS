@@ -83,6 +83,7 @@ void AircraftAHRS::reset() {
     haveGpsHistory_ = false;
     filteredAccelX_ = filteredAccelY_ = 0;
     filteredAccelZ_ = -GRAVITY_MPS2;
+    accelerometerRollConfidence_ = 0.0f;
     haveAccel_ = false;
     lastAcceptedAccelUs_ = lastAccelAidingUs_ = 0;
     filteredBaroAltitudeM_ = filteredBaroRateMps_ = baroBiasM_ = 0;
@@ -399,7 +400,7 @@ float AircraftAHRS::correctionFraction(float dt, float timeConstant) {
     return timeConstant <= 0 ? 1 : 1 - expf(-dt / timeConstant);
 }
 
-void AircraftAHRS::updateRollCorrectionTarget(bool accelerometerResidualValid) {
+void AircraftAHRS::updateRollCorrectionTarget(float accelerometerConfidence) {
     float weightedBank = 0.0f;
     float turnWeight = 0.0f;
     auto addTurnBank = [&](bool valid, float bank, float weight) {
@@ -415,8 +416,8 @@ void AircraftAHRS::updateRollCorrectionTarget(bool accelerometerResidualValid) {
                 config_.yawGyroTurnRateBankWeight);
 
     float turnRateBank = turnWeight > 0.0f ? weightedBank / turnWeight : 0.0f;
-    if (accelerometerResidualValid) {
-        turnRateBank += config_.accelerometerRollWeight *
+    if (accelerometerConfidence > 0.0f) {
+        turnRateBank += config_.accelerometerRollWeight * accelerometerConfidence *
                         state_.accelerometerRollDeg;
     }
     state_.fusedTurnRateBankDeg = fmaxf(-config_.maximumBankTargetDeg,
@@ -424,7 +425,7 @@ void AircraftAHRS::updateRollCorrectionTarget(bool accelerometerResidualValid) {
 
     float finalSum = 0.0f;
     float finalWeight = 0.0f;
-    if ((turnWeight > 0.0f || accelerometerResidualValid) &&
+    if ((turnWeight > 0.0f || accelerometerConfidence > 0.0f) &&
         config_.fusedTurnRateBankWeight > 0.0f) {
         finalSum += config_.fusedTurnRateBankWeight *
                     state_.fusedTurnRateBankDeg;
@@ -554,6 +555,19 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
         }
     }
 
+    // The magnitude gate remains the outer trust boundary, but its roll
+    // contribution now fades rather than switching between full and zero on
+    // adjacent samples.  A half-second time constant rejects sustained
+    // maneuver acceleration without creating a discontinuous bank target.
+    const float rollConfidenceTarget = state_.accelerometerSampleAccepted
+        ? 1.0f : 0.0f;
+    accelerometerRollConfidence_ += correctionFraction(
+        dt, config_.accelerometerRollConfidenceTimeSec) *
+        (rollConfidenceTarget - accelerometerRollConfidence_);
+    accelerometerRollConfidence_ = fmaxf(0.0f,
+        fminf(1.0f, accelerometerRollConfidence_));
+    state_.accelerometerRollConfidence = accelerometerRollConfidence_;
+
     state_.accelerometerAidingValid = false;
     state_.pitchGravityAidingValid = false;
     state_.gpsLongitudinalCompensationValid = false;
@@ -602,7 +616,7 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
             state_.accelerometerRollDeg = accelRoll;
             state_.rawAccelerometerPitchDeg = rawAccelPitch;
             state_.accelerometerPitchDeg = accelPitch;
-            updateRollCorrectionTarget(true);
+            updateRollCorrectionTarget(accelerometerRollConfidence_);
             float rollBlend = correctionFraction(
                 accelAidingDt, config_.accelCorrectionTimeSec);
             state_.rollDeg += rollBlend * wrap180(state_.rollCorrectionTargetDeg - state_.rollDeg);
@@ -619,9 +633,10 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
     }
     if (!accelerationQualityGood &&
         (state_.gpsTurnRateBankValid || state_.magTurnRateBankValid ||
-         state_.yawGyroTurnRateBankValid || state_.magneticRollAidingValid)) {
+         state_.yawGyroTurnRateBankValid || state_.magneticRollAidingValid ||
+         accelerometerRollConfidence_ > 0.0f)) {
         float rollBlend = correctionFraction(dt, config_.rollCorrectionTimeSec);
-        updateRollCorrectionTarget(false);
+        updateRollCorrectionTarget(accelerometerRollConfidence_);
         state_.rollDeg += rollBlend *
             wrap180(state_.rollCorrectionTargetDeg - state_.rollDeg);
     }

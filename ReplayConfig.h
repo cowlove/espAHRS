@@ -100,6 +100,7 @@ struct ReplayConfig {
             {"pitch_gravity_correction_sec", &ahrs.pitchGravityCorrectionTimeSec},
             {"accel_filter_sec", &ahrs.accelFilterTimeSec},
             {"accel_tolerance_mps2", &ahrs.accelMagnitudeToleranceMps2},
+            {"accelerometer_roll_confidence_sec", &ahrs.accelerometerRollConfidenceTimeSec},
             {"gps_turn_rate_bank_weight", &ahrs.gpsTurnRateBankWeight},
             {"mag_turn_rate_bank_weight", &ahrs.magTurnRateBankWeight},
             {"yaw_gyro_turn_rate_bank_weight", &ahrs.yawGyroTurnRateBankWeight},
@@ -179,6 +180,7 @@ struct ReplayConfig {
                    "gps_timeout_sec accel_correction_sec accel_filter_sec "
                    "pitch_gravity_correction_sec "
                    "accel_tolerance_mps2 gps_turn_rate_bank_weight "
+                   "accelerometer_roll_confidence_sec "
                    "mag_turn_rate_bank_weight yaw_gyro_turn_rate_bank_weight "
                    "accelerometer_roll_weight fused_turn_rate_bank_weight "
                    "dip_ahrs_roll_weight "

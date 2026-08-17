@@ -211,6 +211,25 @@ int main() {
     assert(disabled.state(1001).adaptiveGyroBiasYDegSec == 0.0f);
     assert(disabled.state(1001).adaptiveGyroBiasZDegSec == 0.0f);
 
+    // Leaving the 1-g magnitude envelope must fade the accelerometer roll
+    // contribution rather than removing it in one sample.
+    AircraftAHRS::Config fadeConfig;
+    fadeConfig.adaptiveGyroBiasEnabled = false;
+    fadeConfig.accelerometerRollConfidenceTimeSec = 0.5f;
+    AircraftAHRS fading(fadeConfig);
+    for (uint32_t ms = 0; ms <= 2000; ms += 20) {
+        if (ms % 100 == 0) fading.updateGps(90, 30, 100, true, ms + 1);
+        fading.updateImu(0, 0, 0, (ms + 1) * 1000,
+                         0, 1.0f, 9.7555f, true);
+    }
+    const float confidenceBefore = fading.state(2001).accelerometerRollConfidence;
+    const float targetBefore = fading.state(2001).rollCorrectionTargetDeg;
+    fading.updateImu(0, 0, 0, 2021000, 0, 0, 20.0f, true);
+    const auto &faded = fading.state(2021);
+    assert(confidenceBefore > 0.95f);
+    assert(faded.accelerometerRollConfidence > 0.90f);
+    assert(fabsf(faded.rollCorrectionTargetDeg - targetBefore) < 0.2f);
+
     puts("Aircraft AHRS kinematics tests passed");
     return 0;
 }

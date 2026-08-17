@@ -171,6 +171,8 @@ correction.
 | `accel_bias_x_mps2` | m/s² | 0 or HAL | Bias subtracted from X acceleration. |
 | `accel_bias_y_mps2` | m/s² | 0 or HAL | Bias subtracted from Y acceleration. |
 | `accel_bias_z_mps2` | m/s² | 0 or HAL | Bias subtracted from Z acceleration. |
+| `accel_tolerance_mps2` | m/s² | 1.5 | Outer accelerometer trust boundary around 1 g (about ±0.153 g). Pitch aiding remains gated at this boundary. |
+| `accelerometer_roll_confidence_sec` | s | 0.5 | Time constant used to fade the accelerometer contribution into or out of the roll correction target when the magnitude gate changes state. |
 
 The processing order is fixed raw bias subtraction, raw-axis polarity,
 boot-local adaptive bias subtraction, common sensor-to-aircraft mounting
