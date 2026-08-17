@@ -351,6 +351,42 @@ int main(int argc, char **argv) {
             ahrs.updateImu(r.gyroX, r.gyroY, r.gyroZ,
                             static_cast<uint32_t>(h.timestampUs),
                             r.accelX, r.accelY, r.accelZ, r.valid != 0);
+            // Keep the AHRS trace continuous even when no G5 reference is
+            // available.  The G5 columns are NaN on these rows, which lets
+            // plotting preserve the real G5 outage while showing AHRS state.
+            if (rollCsv || pitchCsv) {
+                const auto &s = ahrs.state(nowMs);
+                if (rollCsv) {
+                    std::fprintf(rollCsv, "%.6f,nan,%.6f,%.6f,nan,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,nan\n",
+                                 h.timestampUs * 1.0e-6,
+                                 s.rollDeg,
+                                 s.gpsTurnRateBankDeg,
+                                 s.magTurnRateBankDeg,
+                                 s.yawGyroTurnRateBankDeg,
+                                 s.fusedTurnRateBankDeg,
+                                 s.accelerometerRollDeg,
+                                 s.rollCorrectionTargetDeg,
+                                 s.magneticRollDeg,
+                                 s.magneticRollInnovationDeg,
+                                 s.magneticRollSourceDisagreementDeg,
+                                 s.magneticRollAidingValid ? 1 : 0);
+                }
+                if (pitchCsv) {
+                    std::fprintf(pitchCsv,
+                                 "%.6f,nan,%.6f,%.6f,nan,%.6f,%.6f,%.6f,%.6f,%d,%u,%d,%.6f,nan\n",
+                                 h.timestampUs * 1.0e-6,
+                                 s.pitchDeg,
+                                 s.accelerometerPitchDeg,
+                                 s.rawAccelerometerPitchDeg,
+                                 lastRawPitchGyroDegSec,
+                                 s.gpsLongitudinalAccelerationMps2,
+                                 s.accelerometerMagnitudeMps2,
+                                 s.accelerometerSampleAccepted ? 1 : 0,
+                                 s.accelerometerSampleAgeMs,
+                                 s.gpsLongitudinalCompensationValid ? 1 : 0,
+                                 s.pitchCorrectionTargetDeg);
+                }
+            }
             if (imuCsv) {
                 const auto &s = ahrs.state(nowMs);
                 std::fprintf(imuCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
