@@ -64,7 +64,12 @@ static bool g5Field(const uint8_t *payload, uint32_t length, const char *key, fl
     std::string needle = std::string(key) + "=";
     size_t begin = 0;
     while ((begin = text.find(needle, begin)) != std::string::npos) {
-        if (begin && text[begin - 1] != ' ' && text[begin - 1] != '\n' && text[begin - 1] != '\r') { begin += needle.size(); continue; }
+        // Some G5 sentences place EP= immediately after the packet number
+        // (for example, "53007EP=-4.42"), without a separating space.
+        if (begin && std::strcmp(key, "EP") != 0 &&
+            text[begin - 1] != ' ' && text[begin - 1] != '\n' && text[begin - 1] != '\r') {
+            begin += needle.size(); continue;
+        }
         char *end = nullptr;
         value = std::strtof(text.c_str() + begin + needle.size(), &end);
         if (end != text.c_str() + begin + needle.size()) return std::isfinite(value);
@@ -399,12 +404,24 @@ int main(int argc, char **argv) {
             break;
         }
         default:
-            if (h.type == FUSION_LOG_G5_PACKET) {
+            if (h.type == FUSION_LOG_G5_PACKET || h.type == FUSION_LOG_G5_RAW_ESPNOW) {
+                // Raw ESP-NOW records prepend the sender MAC to the G5 text.
+                // Decode them using the same field parser as decoded packets.
+                const uint8_t *g5Payload = payload;
+                uint32_t g5PayloadLength = h.payloadLength;
+                if (h.type == FUSION_LOG_G5_RAW_ESPNOW) {
+                    if (h.payloadLength <= 6) break;
+                    g5Payload += 6;
+                    g5PayloadLength -= 6;
+                }
                 float g5Roll, g5Pitch, g5Heading, g5Slip = NAN;
-                bool haveRoll = g5Field(payload, h.payloadLength, "R", g5Roll);
-                bool havePitch = g5Field(payload, h.payloadLength, "P", g5Pitch);
-                bool haveHeading = g5Field(payload, h.payloadLength, "HDG", g5Heading);
-                bool haveSlip = g5Field(payload, h.payloadLength, "SL", g5Slip);
+                bool haveRoll = g5Field(g5Payload, g5PayloadLength, "R", g5Roll);
+                // Current G5 attitude messages label pitch as EP= (Euler
+                // pitch); older packet formats used P=.
+                bool havePitch = g5Field(g5Payload, g5PayloadLength, "EP", g5Pitch) ||
+                                 g5Field(g5Payload, g5PayloadLength, "P", g5Pitch);
+                bool haveHeading = g5Field(g5Payload, g5PayloadLength, "HDG", g5Heading);
+                bool haveSlip = g5Field(g5Payload, g5PayloadLength, "SL", g5Slip);
                 // Administrative packets can contain unrelated fields named
                 // R= or P=.  Only a complete attitude tuple is a G5 reference.
                 if (haveRoll && havePitch && haveHeading) {
