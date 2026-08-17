@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import math
 
 
 def read_column(path, name):
@@ -24,7 +25,13 @@ def read_column(path, name):
                 values.append(float(row[name]))
             except (TypeError, ValueError):
                 values.append(float("nan"))
-        return values
+    return values
+
+
+def finite_series(times, values):
+    """Return time/value pairs for a sparse series containing NaN gaps."""
+    return ([t for t, value in zip(times, values) if math.isfinite(value)],
+            [value for value in values if math.isfinite(value)])
 
 
 def main():
@@ -76,20 +83,23 @@ def main():
         time_pitch = read_column(pitch_csv, "time_s")
         g5_pitch = read_column(pitch_csv, "g5_pitch")
         ahrs_pitch = read_column(pitch_csv, "ahrs_pitch")
-        time_roll = read_column(roll_csv, "time_s")
+    time_roll = read_column(roll_csv, "time_s")
         g5_roll = read_column(roll_csv, "g5_roll")
-        ahrs_roll = read_column(roll_csv, "ahrs_roll")
+    ahrs_roll = read_column(roll_csv, "ahrs_roll")
+
+    g5_time_pitch, g5_pitch = finite_series(time_pitch, g5_pitch)
+    g5_time_roll, g5_roll = finite_series(time_roll, g5_roll)
 
     fig, (pitch_ax, roll_ax) = plt.subplots(2, 1, sharex=False, figsize=(12, 8),
                                              constrained_layout=True)
-    pitch_ax.plot(time_pitch, g5_pitch, label="G5 pitch", linewidth=1.0)
+    pitch_ax.plot(g5_time_pitch, g5_pitch, label="G5 pitch", linewidth=1.0)
     pitch_ax.plot(time_pitch, ahrs_pitch, label="AHRS pitch", linewidth=1.0)
     pitch_ax.set_title("G5 pitch and AHRS pitch")
     pitch_ax.set_ylabel("degrees")
     pitch_ax.grid(True, alpha=0.3)
     pitch_ax.legend()
 
-    roll_ax.plot(time_roll, g5_roll, label="G5 roll", linewidth=1.0)
+    roll_ax.plot(g5_time_roll, g5_roll, label="G5 roll", linewidth=1.0)
     roll_ax.plot(time_roll, ahrs_roll, label="AHRS roll", linewidth=1.0)
     roll_ax.set_title("G5 roll and AHRS roll")
     roll_ax.set_xlabel("log time (s)")
