@@ -113,7 +113,7 @@ def main():
     pitch_ax.plot(g5_time_pitch, g5_pitch, label="G5 pitch", linewidth=1.0)
     pitch_ax.plot(time_pitch, ahrs_pitch, label="AHRS pitch", linewidth=1.0)
     pitch_ax.plot(time_pitch, pitch_target, label="Pitch correction target",
-                  linewidth=1.0, alpha=0.8)
+                  linewidth=0.8, alpha=0.3)
     pitch_ax.set_title("Pitch attitude and correction target")
     pitch_ax.set_ylabel("degrees")
     pitch_ax.grid(True, alpha=0.3)
@@ -122,7 +122,7 @@ def main():
     roll_ax.plot(g5_time_roll, g5_roll, label="G5 roll", linewidth=1.0)
     roll_ax.plot(time_roll, ahrs_roll, label="AHRS roll", linewidth=1.0)
     roll_ax.plot(time_roll, roll_target, label="Roll correction target",
-                 linewidth=1.0, alpha=0.8)
+                 linewidth=0.8, alpha=0.3)
     roll_ax.set_title("Roll attitude and correction target")
     roll_ax.set_xlabel("log time (s)")
     roll_ax.set_ylabel("degrees")
