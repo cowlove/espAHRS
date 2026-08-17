@@ -17,7 +17,7 @@ public:
         float rollCorrectionTimeSec = 2.0f;
         float pitchCorrectionTimeSec = 8.0f;
         float gpsDerivativeTimeSec = 1.5f;
-        float gpsLongitudinalAccelerationFilterTimeSec = 0.0f;
+        float gpsLongitudinalAccelerationFilterTimeSec = 2.0f;
         float gpsLongitudinalAccelerationCompensationGain = 1.0f;
         float gpsLongitudinalAccelerationMaximumBankDeg = 10.0f;
         float fusedHeadingFilterTimeSec = 0.35f;

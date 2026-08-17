@@ -196,7 +196,7 @@ trust gyro integration more.
 | `accel_correction_sec` | s | 5.0 | Response to the combined accelerometer/GPS-bank roll target. |
 | `pitch_gravity_correction_sec` | s | 12.0 | Response to the longitudinal-acceleration-compensated accelerometer pitch target. |
 | `gps_derivative_sec` | s | 1.5 | Smoothing of GPS track rate used for turn-rate and bank estimation. |
-| `gps_longitudinal_accel_filter_sec` | s | 0.0 | Smoothing of GPS horizontal-velocity derivative projected onto fused aircraft heading. Zero uses each measured derivative directly. |
+| `gps_longitudinal_accel_filter_sec` | s | 2.0 | Smoothing of GPS horizontal-velocity derivative projected onto fused aircraft heading. This suppresses GPS quantization steps while retaining sustained longitudinal-acceleration compensation. |
 | `gps_longitudinal_accel_compensation_gain` | — | 1.0 | Gain applied when subtracting projected GPS longitudinal acceleration from the accelerometer X component. |
 | `gps_longitudinal_accel_max_bank_deg` | deg | 10.0 | Maximum absolute GPS turn-rate bank estimate at which longitudinal acceleration compensation is used. |
 
