@@ -88,96 +88,117 @@ void AircraftAHRS::reset() {
     filteredBaroAltitudeM_ = filteredBaroRateMps_ = baroBiasM_ = 0;
     haveBaro_ = false;
     memset(adaptiveGyroBias_, 0, sizeof(adaptiveGyroBias_));
-    memset(adaptiveGyroBiasCandidate_, 0, sizeof(adaptiveGyroBiasCandidate_));
-    memset(adaptiveGyroBiasVariance_, 0, sizeof(adaptiveGyroBiasVariance_));
-    haveAdaptiveGyroBiasCandidate_ = false;
-    adaptiveGyroBiasQualifyingTimeSec_ = 0;
+    memset(adaptiveGyroBiasInformation_, 0, sizeof(adaptiveGyroBiasInformation_));
+    adaptiveGyroBiasRejectedInnovations_ = 0;
 }
 
-void AircraftAHRS::updateAdaptiveGyroBias(
-        float pDegSec, float qDegSec, float rDegSec,
-        float accelX, float accelY, float accelZ, bool accelerometerValid,
-        float dt, uint32_t nowUs) {
-    const float gyro[3] = {pDegSec, qDegSec, rDegSec};
-    const float accelMagnitude = sqrtf(accelX * accelX + accelY * accelY +
-                                       accelZ * accelZ);
-    const uint32_t nowMs = nowUs / 1000U;
-    const bool gpsFresh = lastGpsMs_ &&
-        (uint32_t)(nowMs - lastGpsMs_) <= config_.gpsTimeoutSec * 1000.0f;
-    const bool stationary = gpsFresh && state_.gpsValid &&
-        state_.groundSpeedMps <= config_.adaptiveGyroBiasStationarySpeedMps;
-    const bool straightMoving = gpsFresh && state_.gpsValid &&
-        state_.groundSpeedMps >= config_.minimumGroundSpeedMps &&
-        state_.gpsTurnRateBankValid &&
-        fabsf(filteredGpsTurnRateRadSec_ * RAD_TO_DEG_F) <=
-            config_.adaptiveGyroBiasMaximumGpsTrackRateDegSec;
-    const bool quietGyro =
-        fabsf(pDegSec - adaptiveGyroBias_[0]) <= config_.adaptiveGyroBiasMaximumBodyRateDegSec &&
-        fabsf(qDegSec - adaptiveGyroBias_[1]) <= config_.adaptiveGyroBiasMaximumBodyRateDegSec &&
-        fabsf(rDegSec - adaptiveGyroBias_[2]) <= config_.adaptiveGyroBiasMaximumBodyRateDegSec;
-    const bool quietAccel = accelerometerValid && isfinite(accelMagnitude) &&
-        fabsf(accelMagnitude - GRAVITY_MPS2) <=
-            config_.adaptiveGyroBiasAccelToleranceMps2;
-    const bool evidenceUsable = config_.adaptiveGyroBiasEnabled && quietGyro && quietAccel &&
-        (stationary || straightMoving);
-
-    bool varianceQuiet = false;
-    if (!evidenceUsable) {
-        adaptiveGyroBiasQualifyingTimeSec_ = 0;
-        haveAdaptiveGyroBiasCandidate_ = false;
-        memset(adaptiveGyroBiasVariance_, 0, sizeof(adaptiveGyroBiasVariance_));
-    } else {
-        if (!haveAdaptiveGyroBiasCandidate_) {
-            memcpy(adaptiveGyroBiasCandidate_, gyro,
-                   sizeof(adaptiveGyroBiasCandidate_));
-            haveAdaptiveGyroBiasCandidate_ = true;
-        } else {
-            const float meanAlpha = correctionFraction(
-                dt, config_.adaptiveGyroBiasMeanTimeSec);
-            for (int axis = 0; axis < 3; ++axis) {
-                const float residual = gyro[axis] - adaptiveGyroBiasCandidate_[axis];
-                adaptiveGyroBiasCandidate_[axis] += meanAlpha *
-                    residual;
-                adaptiveGyroBiasVariance_[axis] += meanAlpha *
-                    (residual * residual - adaptiveGyroBiasVariance_[axis]);
-            }
-        }
-        varianceQuiet = true;
+void AircraftAHRS::updateAdaptiveGyroBias(float dt) {
+    float transform[3][3];
+    const float gain[3] = {config_.gyroGainX, config_.gyroGainY,
+                           config_.gyroGainZ};
+    for (int row = 0; row < 3; ++row)
         for (int axis = 0; axis < 3; ++axis)
-            varianceQuiet = varianceQuiet && adaptiveGyroBiasVariance_[axis] <=
-                config_.adaptiveGyroBiasMaximumStdDevDegSec *
-                config_.adaptiveGyroBiasMaximumStdDevDegSec;
-        if (varianceQuiet) adaptiveGyroBiasQualifyingTimeSec_ += dt;
-        else adaptiveGyroBiasQualifyingTimeSec_ = 0;
-        if (adaptiveGyroBiasQualifyingTimeSec_ >=
-            config_.adaptiveGyroBiasQualificationTimeSec) {
-            const float learnAlpha = correctionFraction(
-                dt, config_.adaptiveGyroBiasLearningTimeSec);
-            for (int axis = 0; axis < 3; ++axis) {
-                adaptiveGyroBias_[axis] += learnAlpha *
-                    (adaptiveGyroBiasCandidate_[axis] - adaptiveGyroBias_[axis]);
-                adaptiveGyroBias_[axis] = fmaxf(
-                    -config_.adaptiveGyroBiasMaximumDegSec,
-                    fminf(config_.adaptiveGyroBiasMaximumDegSec,
-                          adaptiveGyroBias_[axis]));
-            }
+            transform[row][axis] = gain[row] * sensorFrameRotation_[row][axis];
+
+    const float phi = state_.rollDeg * DEG_TO_RAD_F;
+    const float theta = state_.pitchDeg * DEG_TO_RAD_F;
+    float cosTheta = cosf(theta);
+    if (fabsf(cosTheta) < 0.1f) cosTheta = copysignf(0.1f, cosTheta);
+    const float euler[3][3] = {
+        {1.0f, sinf(phi) * sinf(theta) / cosTheta,
+               cosf(phi) * sinf(theta) / cosTheta},
+        {0.0f, cosf(phi), -sinf(phi)},
+        {0.0f, sinf(phi) / cosTheta, cosf(phi) / cosTheta}
+    };
+    float sensitivity[3][3]{};
+    for (int measurement = 0; measurement < 3; ++measurement)
+        for (int axis = 0; axis < 3; ++axis)
+            for (int body = 0; body < 3; ++body)
+                sensitivity[measurement][axis] +=
+                    euler[measurement][body] * transform[body][axis];
+
+    const bool valid[3] = {
+        state_.accelerometerAidingValid || state_.gpsTurnRateBankValid ||
+            state_.magneticRollAidingValid,
+        state_.pitchGravityAidingValid,
+        state_.headingAidingValid
+    };
+    float innovation[3] = {
+        wrap180(state_.rollDeg - state_.rollCorrectionTargetDeg),
+        wrap180(state_.pitchDeg - state_.pitchCorrectionTargetDeg),
+        wrap180(state_.headingDeg - state_.fusedHeadingDeg)
+    };
+    state_.adaptiveGyroBiasRollInnovationDeg = valid[0] ? innovation[0] : 0.0f;
+    state_.adaptiveGyroBiasPitchInnovationDeg = valid[1] ? innovation[1] : 0.0f;
+    state_.adaptiveGyroBiasHeadingInnovationDeg = valid[2] ? innovation[2] : 0.0f;
+
+    float numerator[3]{};
+    float information[3]{};
+    for (int measurement = 0; measurement < 3; ++measurement) {
+        if (!valid[measurement]) continue;
+        if (!isfinite(innovation[measurement]) ||
+            fabsf(innovation[measurement]) >
+                config_.adaptiveGyroBiasInnovationLimitDeg) {
+            ++adaptiveGyroBiasRejectedInnovations_;
+            continue;
+        }
+        for (int axis = 0; axis < 3; ++axis) {
+            numerator[axis] += sensitivity[measurement][axis] *
+                               innovation[measurement];
+            information[axis] += sensitivity[measurement][axis] *
+                                 sensitivity[measurement][axis];
         }
     }
 
-    state_.adaptiveGyroBiasQualified = evidenceUsable && varianceQuiet &&
-        adaptiveGyroBiasQualifyingTimeSec_ >=
-            config_.adaptiveGyroBiasQualificationTimeSec;
-    state_.adaptiveGyroBiasQualifyingTimeSec =
-        adaptiveGyroBiasQualifyingTimeSec_;
+    const float threshold = fmaxf(0.001f,
+        config_.adaptiveGyroBiasQualificationTimeSec);
+    for (int axis = 0; axis < 3; ++axis) {
+        adaptiveGyroBiasInformation_[axis] += dt * information[axis];
+        const float confidence = fminf(1.0f,
+            adaptiveGyroBiasInformation_[axis] / threshold);
+        if (config_.adaptiveGyroBiasEnabled && confidence >= 1.0f &&
+            information[axis] > 1.0e-5f) {
+            float rate = numerator[axis] /
+                (information[axis] *
+                 fmaxf(0.1f, config_.adaptiveGyroBiasLearningTimeSec));
+            const float maxSlew = config_.adaptiveGyroBiasMaximumSlewDegSec2;
+            if (maxSlew > 0.0f)
+                rate = fmaxf(-maxSlew, fminf(maxSlew, rate));
+            adaptiveGyroBias_[axis] += dt * rate;
+            adaptiveGyroBias_[axis] = fmaxf(-config_.adaptiveGyroBiasMaximumDegSec,
+                fminf(config_.adaptiveGyroBiasMaximumDegSec,
+                      adaptiveGyroBias_[axis]));
+        }
+    }
+
+    state_.adaptiveGyroBiasInformationXSec = adaptiveGyroBiasInformation_[0];
+    state_.adaptiveGyroBiasInformationYSec = adaptiveGyroBiasInformation_[1];
+    state_.adaptiveGyroBiasInformationZSec = adaptiveGyroBiasInformation_[2];
+    state_.adaptiveGyroBiasConfidenceX = fminf(1.0f,
+        adaptiveGyroBiasInformation_[0] / threshold);
+    state_.adaptiveGyroBiasConfidenceY = fminf(1.0f,
+        adaptiveGyroBiasInformation_[1] / threshold);
+    state_.adaptiveGyroBiasConfidenceZ = fminf(1.0f,
+        adaptiveGyroBiasInformation_[2] / threshold);
+    state_.adaptiveGyroBiasQualified =
+        state_.adaptiveGyroBiasConfidenceX >= 1.0f ||
+        state_.adaptiveGyroBiasConfidenceY >= 1.0f ||
+        state_.adaptiveGyroBiasConfidenceZ >= 1.0f;
+    state_.adaptiveGyroBiasQualifyingTimeSec = fminf(
+        adaptiveGyroBiasInformation_[0], fminf(adaptiveGyroBiasInformation_[1],
+                                                adaptiveGyroBiasInformation_[2]));
     state_.adaptiveGyroBiasXDegSec = adaptiveGyroBias_[0];
     state_.adaptiveGyroBiasYDegSec = adaptiveGyroBias_[1];
     state_.adaptiveGyroBiasZDegSec = adaptiveGyroBias_[2];
-    state_.adaptiveGyroBiasCandidateXDegSec = adaptiveGyroBiasCandidate_[0];
-    state_.adaptiveGyroBiasCandidateYDegSec = adaptiveGyroBiasCandidate_[1];
-    state_.adaptiveGyroBiasCandidateZDegSec = adaptiveGyroBiasCandidate_[2];
-    state_.adaptiveGyroBiasStdDevXDegSec = sqrtf(adaptiveGyroBiasVariance_[0]);
-    state_.adaptiveGyroBiasStdDevYDegSec = sqrtf(adaptiveGyroBiasVariance_[1]);
-    state_.adaptiveGyroBiasStdDevZDegSec = sqrtf(adaptiveGyroBiasVariance_[2]);
+    // Retained as zero-valued legacy fields for existing telemetry readers.
+    state_.adaptiveGyroBiasCandidateXDegSec = 0.0f;
+    state_.adaptiveGyroBiasCandidateYDegSec = 0.0f;
+    state_.adaptiveGyroBiasCandidateZDegSec = 0.0f;
+    state_.adaptiveGyroBiasStdDevXDegSec = 0.0f;
+    state_.adaptiveGyroBiasStdDevYDegSec = 0.0f;
+    state_.adaptiveGyroBiasStdDevZDegSec = 0.0f;
+    state_.adaptiveGyroBiasRejectedInnovations =
+        adaptiveGyroBiasRejectedInnovations_;
 }
 
 void AircraftAHRS::updateCompass(uint8_t source, float x, float y, float z,
@@ -430,6 +451,12 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
     pDegSec *= config_.gyroAxisSignX;
     qDegSec *= config_.gyroAxisSignY;
     rDegSec *= config_.gyroAxisSignZ;
+    // The learned state is expressed in the calibrated AHRS input axes.  It
+    // is removed before the fine installed-sensor rotation so the observer's
+    // Jacobian can distribute Euler innovations across all three channels.
+    pDegSec -= adaptiveGyroBias_[0];
+    qDegSec -= adaptiveGyroBias_[1];
+    rDegSec -= adaptiveGyroBias_[2];
     rotateVector(sensorFrameRotation_, pDegSec, qDegSec, rDegSec);
     pDegSec *= config_.gyroGainX;
     qDegSec *= config_.gyroGainY;
@@ -446,16 +473,6 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
     state_.lastImuDtSec = dt;
     lastImuUs_ = nowUs;
     if (dt <= 0 || dt > 0.1f) return;
-
-    // Estimate only the residual body-frame bias. This is deliberately after
-    // fixed calibration/remapping and before adaptive correction, preserving
-    // raw logs and keeping replay behavior identical to live behavior.
-    updateAdaptiveGyroBias(pDegSec, qDegSec, rDegSec,
-                           accelX, accelY, accelZ, accelerometerValid,
-                           dt, nowUs);
-    pDegSec -= adaptiveGyroBias_[0];
-    qDegSec -= adaptiveGyroBias_[1];
-    rDegSec -= adaptiveGyroBias_[2];
 
     const float gyroLimit = config_.gyroRateLimitDegSec;
     if (gyroLimit > 0.0f &&
@@ -554,9 +571,9 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
             if (accelAidingDt > 1.0f) accelAidingDt = 1.0f;
             lastAccelAidingUs_ = nowUs;
             // Undo the current roll before extracting the fore/aft tilt.  The
-            // installed GEEK/ICM convention used by the current logs has
-            // gravity approximately (0, 0, +g) when level and positive G5
-            // roll corresponds to positive Y.
+            // The installed sensor convention used by the current logs has
+            // gravity approximately (0, 0, +g) when level and positive
+            // aircraft roll corresponds to positive Y.
             float currentRoll = state_.rollDeg * DEG_TO_RAD_F;
             float correctedZ = -sinf(currentRoll) * filteredAccelY_ +
                                cosf(currentRoll) * filteredAccelZ_;
@@ -608,6 +625,10 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
         state_.rollDeg += rollBlend *
             wrap180(state_.rollCorrectionTargetDeg - state_.rollDeg);
     }
+    // Update after all production correction targets and validity flags have
+    // been evaluated.  The new bias is applied beginning with the next IMU
+    // sample, avoiding an algebraic loop through the current correction.
+    updateAdaptiveGyroBias(dt);
 }
 
 void AircraftAHRS::updateGps(float trackDeg, float speed, float altitudeM,

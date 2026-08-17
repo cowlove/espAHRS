@@ -165,29 +165,51 @@ int main() {
     assert(fabsf(state.lastPitchBodyRateDegSec - y) < 1e-5f);
     assert(fabsf(state.lastYawBodyRateDegSec - z) < 1e-5f);
 
-    // The adaptive estimator starts from zero every boot, qualifies only
-    // during quiet straight/stationary evidence, and then converges toward
-    // the residual bias without changing the fixed calibration.
+    // The adaptive observer starts from zero every boot, accumulates
+    // per-axis information from production correction targets, and converges
+    // toward injected input-axis bias while ordinary moving-flight GPS and
+    // accelerometer aiding remain active.
     AircraftAHRS::Config adaptiveConfig;
     adaptiveConfig.gyroIntegrationDtSec = 0.02f;
     adaptiveConfig.adaptiveGyroBiasQualificationTimeSec = 0.2f;
-    adaptiveConfig.adaptiveGyroBiasLearningTimeSec = 0.2f;
-    adaptiveConfig.adaptiveGyroBiasMeanTimeSec = 0.02f;
+    adaptiveConfig.adaptiveGyroBiasLearningTimeSec = 0.5f;
+    adaptiveConfig.adaptiveGyroBiasMaximumSlewDegSec2 = 2.0f;
+    adaptiveConfig.adaptiveGyroBiasMaximumDegSec = 1.0f;
     AircraftAHRS adaptive(adaptiveConfig);
-    for (uint32_t ms = 0; ms <= 1200; ms += 20) {
-        if (ms % 100 == 0) adaptive.updateGps(90, 0, 100, true, ms + 1);
+    float observerRotation[3][3];
+    makeSensorFrameRotation(11.0f, 7.0f, 3.0f, observerRotation);
+    adaptive.setSensorFrameRotation(observerRotation);
+    // Input-frame acceleration that becomes (0,0,+g) after rotation.
+    const float accelInputX = observerRotation[2][0] * 9.80665f;
+    const float accelInputY = observerRotation[2][1] * 9.80665f;
+    const float accelInputZ = observerRotation[2][2] * 9.80665f;
+    for (uint32_t ms = 0; ms <= 10000; ms += 20) {
+        if (ms % 100 == 0) adaptive.updateGps(90, 30, 100, true, ms + 1);
         adaptive.updateImu(0.4f, -0.2f, 0.1f, (ms + 1) * 1000,
-                           0, 0, 9.80665f, true);
+                           accelInputX, accelInputY, accelInputZ, true);
     }
-    const auto &adapted = adaptive.state(1201);
+    const auto &adapted = adaptive.state(10001);
     assert(adapted.adaptiveGyroBiasQualified);
     assert(fabsf(adapted.adaptiveGyroBiasXDegSec - 0.4f) < 0.02f);
     assert(fabsf(adapted.adaptiveGyroBiasYDegSec + 0.2f) < 0.02f);
     assert(fabsf(adapted.adaptiveGyroBiasZDegSec - 0.1f) < 0.02f);
-    adaptive.updateImu(5, 0, 0, 1221000, 0, 0, 9.80665f, true);
-    assert(!adaptive.state(1221).adaptiveGyroBiasQualified);
+    assert(adapted.adaptiveGyroBiasConfidenceX == 1.0f);
+    assert(adapted.adaptiveGyroBiasConfidenceY == 1.0f);
+    assert(adapted.adaptiveGyroBiasConfidenceZ == 1.0f);
     adaptive.reset();
     assert(adaptive.state(0).adaptiveGyroBiasXDegSec == 0.0f);
+
+    AircraftAHRS::Config disabledConfig = adaptiveConfig;
+    disabledConfig.adaptiveGyroBiasEnabled = false;
+    AircraftAHRS disabled(disabledConfig);
+    for (uint32_t ms = 0; ms <= 1000; ms += 20) {
+        if (ms % 100 == 0) disabled.updateGps(90, 30, 100, true, ms + 1);
+        disabled.updateImu(0.4f, -0.2f, 0.1f, (ms + 1) * 1000,
+                           0, 0, 9.80665f, true);
+    }
+    assert(disabled.state(1001).adaptiveGyroBiasXDegSec == 0.0f);
+    assert(disabled.state(1001).adaptiveGyroBiasYDegSec == 0.0f);
+    assert(disabled.state(1001).adaptiveGyroBiasZDegSec == 0.0f);
 
     puts("Aircraft AHRS kinematics tests passed");
     return 0;

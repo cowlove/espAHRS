@@ -88,6 +88,8 @@ struct ReplayConfig {
             {"adaptive_gyro_bias_max_stddev_deg_sec", &ahrs.adaptiveGyroBiasMaximumStdDevDegSec},
             {"adaptive_gyro_bias_accel_tolerance_mps2", &ahrs.adaptiveGyroBiasAccelToleranceMps2},
             {"adaptive_gyro_bias_stationary_speed_mps", &ahrs.adaptiveGyroBiasStationarySpeedMps},
+            {"adaptive_gyro_bias_innovation_limit_deg", &ahrs.adaptiveGyroBiasInnovationLimitDeg},
+            {"adaptive_gyro_bias_max_slew_deg_sec2", &ahrs.adaptiveGyroBiasMaximumSlewDegSec2},
             {"accel_bias_x_mps2", &ahrs.accelBiasXMps2},
             {"accel_bias_y_mps2", &ahrs.accelBiasYMps2},
             {"accel_bias_z_mps2", &ahrs.accelBiasZMps2},
@@ -118,6 +120,9 @@ struct ReplayConfig {
         };
         for (const auto &field : fields) if (std::strcmp(name, field.name) == 0) {
             *field.value = value; return true;
+        }
+        if (std::strcmp(name, "adaptive_gyro_bias_enabled") == 0) {
+            ahrs.adaptiveGyroBiasEnabled = value != 0.0f; return true;
         }
         if (std::strcmp(name, "g5_heading_offset_deg") == 0) {
             g5HeadingOffsetDeg = value; return true;
@@ -167,6 +172,8 @@ struct ReplayConfig {
                    "adaptive_gyro_bias_max_stddev_deg_sec "
                    "adaptive_gyro_bias_accel_tolerance_mps2 "
                    "adaptive_gyro_bias_stationary_speed_mps "
+                   "adaptive_gyro_bias_enabled adaptive_gyro_bias_innovation_limit_deg "
+                   "adaptive_gyro_bias_max_slew_deg_sec2 "
                    "accel_bias_x_mps2 accel_bias_y_mps2 accel_bias_z_mps2 "
                    "vertical_rate_filter_sec "
                    "gps_timeout_sec accel_correction_sec accel_filter_sec "

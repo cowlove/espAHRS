@@ -151,27 +151,31 @@ the exact calibration used by a replay.
 | `gyro_axis_sign_z` | sign | HAL | Polarity multiplier for Z. |
 | `gyro_rate_limit_deg_sec` | deg/s | 60 | Per-sample aircraft-frame gyro outlier limit; rejected samples hold the previous accepted gyro vector. |
 | `gyro_integration_dt_sec` | s | 0.020 | Fixed gyro integration weight per sample; zero uses measured sample interval. |
-| `adaptive_gyro_bias_qualification_sec` | s | 30 | Continuous quiet, near-1 g, stationary-or-straight GPS evidence required before learning. |
-| `adaptive_gyro_bias_learning_sec` | s | 1200 | Slow EMA time constant for the boot-local residual body-axis gyro bias. |
-| `adaptive_gyro_bias_mean_sec` | s | 10 | Candidate gyro mean and variance time constant. |
-| `adaptive_gyro_bias_max_deg_sec` | deg/s | 1.0 | Absolute learned correction bound on each body axis. |
-| `adaptive_gyro_bias_max_body_rate_deg_sec` | deg/s | 1.5 | Per-axis low-motion gate. |
-| `adaptive_gyro_bias_max_gps_track_rate_deg_sec` | deg/s | 0.5 | Maximum filtered GPS track rate while moving. |
-| `adaptive_gyro_bias_max_stddev_deg_sec` | deg/s | 0.15 | Maximum candidate standard deviation on every gyro axis. |
-| `adaptive_gyro_bias_accel_tolerance_mps2` | m/s^2 | 0.35 | Required proximity of acceleration magnitude to 1 g. |
-| `adaptive_gyro_bias_stationary_speed_mps` | m/s | 2.0 | GPS speed at or below which track direction is ignored as stationary. |
+| `adaptive_gyro_bias_enabled` | bool | 1 | Enables the boot-local correction-target observer. Zero preserves AHRS propagation while still exposing observer information diagnostics. |
+| `adaptive_gyro_bias_qualification_sec` | s | 30 | Per-axis accumulated Jacobian information required before that axis may update. |
+| `adaptive_gyro_bias_learning_sec` | s | 1200 | Integral-observer learning time; larger values make bias learning slower. |
+| `adaptive_gyro_bias_max_deg_sec` | deg/s | 0.25 | Absolute learned correction bound on each calibrated AHRS-input gyro axis. |
+| `adaptive_gyro_bias_innovation_limit_deg` | deg | 1.0 | Rejects correction-target innovations too large to be credible slow-bias evidence. |
+| `adaptive_gyro_bias_max_slew_deg_sec2` | deg/s² | 0.01 | Maximum rate at which any learned bias may change. |
+
+The older `adaptive_gyro_bias_mean_sec`, body-rate, track-rate, standard-
+deviation, acceleration-tolerance, and stationary-speed parameters are retained
+for replay/configuration compatibility but are not used by the correction-
+target observer.
 
 Adaptive gyro bias always starts at zero on boot and is added after the fixed
 per-device calibration. It is never persisted. Binary IMU records remain raw;
 replay runs the same estimator and `--imu-csv` exposes its gate, candidate,
-variance, and learned correction.
+per-axis information/confidence, innovations, rejection count, and learned
+correction.
 | `accel_bias_x_mps2` | m/s² | 0 or HAL | Bias subtracted from X acceleration. |
 | `accel_bias_y_mps2` | m/s² | 0 or HAL | Bias subtracted from Y acceleration. |
 | `accel_bias_z_mps2` | m/s² | 0 or HAL | Bias subtracted from Z acceleration. |
 
-The processing order is raw bias subtraction, raw-axis polarity, common
-sensor-to-aircraft mounting rotation, aircraft-frame gain, outlier gate, then
-body-rate-to-Euler-rate conversion. A gyro bias error accumulates
+The processing order is fixed raw bias subtraction, raw-axis polarity,
+boot-local adaptive bias subtraction, common sensor-to-aircraft mounting
+rotation, aircraft-frame gain, outlier gate, then body-rate-to-Euler-rate
+conversion. A gyro bias error accumulates
 with time, so it often appears as a steadily growing attitude error. A sign
 error usually produces an error that grows in the wrong direction during a
 deliberate motion and then gets pulled back by the correction target.

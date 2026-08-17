@@ -109,7 +109,7 @@ static bool readLogMetadata(const char *path, FusionLogMetadataRecord &metadata)
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s session.bin [--device-mac MAC_OR_UNIQUE_SUFFIX] [--hal geek|tbeam] [--axis-remap 9 values] [--gyro-axis-remap 9 values] [--param name=value] [--roll-csv FILE] [--pitch-csv FILE] [--imu-csv FILE] [--list-params]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s session.bin [--device-mac MAC_OR_UNIQUE_SUFFIX] [--hal geek|tbeam] [--axis-remap 9 values] [--gyro-axis-remap 9 values] [--param name=value] [--roll-csv FILE] [--pitch-csv FILE] [--imu-csv FILE] [--ignore-g5] [--list-params]\n", argv[0]);
         return 2;
     }
     enum class ReplayHal { Geek, TBeam } replayHal = ReplayHal::Geek;
@@ -176,8 +176,10 @@ int main(int argc, char **argv) {
     std::FILE *rollCsv = nullptr;
     std::FILE *pitchCsv = nullptr;
     std::FILE *imuCsv = nullptr;
+    bool ignoreG5 = false;
     for (int i = 2; i < argc; ++i) {
         if (std::strcmp(argv[i], "--list-params") == 0) { ReplayConfig::list(); return 0; }
+        if (std::strcmp(argv[i], "--ignore-g5") == 0) { ignoreG5 = true; continue; }
         if (std::strcmp(argv[i], "--hal") == 0 && i + 1 < argc) {
             const char *name = argv[++i];
             if (std::strcmp(name, "geek") == 0) replayHal = ReplayHal::Geek;
@@ -225,7 +227,7 @@ int main(int argc, char **argv) {
         if (std::strcmp(argv[i], "--imu-csv") == 0 && i + 1 < argc) {
             imuCsv = std::fopen(argv[++i], "w");
             if (!imuCsv) { std::perror("--imu-csv"); return 1; }
-                std::fprintf(imuCsv, "time_s,dt_s,raw_gyro_x_deg_sec,raw_gyro_y_deg_sec,raw_gyro_z_deg_sec,body_pitch_rate_deg_sec,yaw_rate_deg_sec,pitch_q_contribution_deg_sec,pitch_yaw_coupling_deg_sec,gyro_pitch_delta_deg,accel_pitch_correction_delta_deg,gps_pitch_correction_delta_deg,ahrs_roll,ahrs_pitch,gyro_sample_accepted,adaptive_bias_qualified,adaptive_bias_qualifying_sec,adaptive_bias_x_deg_sec,adaptive_bias_y_deg_sec,adaptive_bias_z_deg_sec,adaptive_candidate_x_deg_sec,adaptive_candidate_y_deg_sec,adaptive_candidate_z_deg_sec,adaptive_stddev_x_deg_sec,adaptive_stddev_y_deg_sec,adaptive_stddev_z_deg_sec\n");
+                std::fprintf(imuCsv, "time_s,dt_s,raw_gyro_x_deg_sec,raw_gyro_y_deg_sec,raw_gyro_z_deg_sec,body_pitch_rate_deg_sec,yaw_rate_deg_sec,pitch_q_contribution_deg_sec,pitch_yaw_coupling_deg_sec,gyro_pitch_delta_deg,accel_pitch_correction_delta_deg,gps_pitch_correction_delta_deg,ahrs_roll,ahrs_pitch,gyro_sample_accepted,adaptive_bias_qualified,adaptive_bias_qualifying_sec,adaptive_bias_x_deg_sec,adaptive_bias_y_deg_sec,adaptive_bias_z_deg_sec,adaptive_candidate_x_deg_sec,adaptive_candidate_y_deg_sec,adaptive_candidate_z_deg_sec,adaptive_stddev_x_deg_sec,adaptive_stddev_y_deg_sec,adaptive_stddev_z_deg_sec,adaptive_information_x_sec,adaptive_information_y_sec,adaptive_information_z_sec,adaptive_confidence_x,adaptive_confidence_y,adaptive_confidence_z,adaptive_roll_innovation_deg,adaptive_pitch_innovation_deg,adaptive_heading_innovation_deg,adaptive_rejected_innovations\n");
             continue;
         }
         if (std::strcmp(argv[i], "--param") == 0 && i + 1 < argc) ++i;
@@ -389,7 +391,7 @@ int main(int argc, char **argv) {
             }
             if (imuCsv) {
                 const auto &s = ahrs.state(nowMs);
-                std::fprintf(imuCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+                std::fprintf(imuCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%u\n",
                              h.timestampUs * 1.0e-6, s.lastImuDtSec,
                              r.gyroX, r.gyroY, r.gyroZ,
                              s.lastPitchBodyRateDegSec, s.lastYawBodyRateDegSec,
@@ -410,7 +412,17 @@ int main(int argc, char **argv) {
                              s.adaptiveGyroBiasCandidateZDegSec,
                              s.adaptiveGyroBiasStdDevXDegSec,
                              s.adaptiveGyroBiasStdDevYDegSec,
-                             s.adaptiveGyroBiasStdDevZDegSec);
+                             s.adaptiveGyroBiasStdDevZDegSec,
+                             s.adaptiveGyroBiasInformationXSec,
+                             s.adaptiveGyroBiasInformationYSec,
+                             s.adaptiveGyroBiasInformationZSec,
+                             s.adaptiveGyroBiasConfidenceX,
+                             s.adaptiveGyroBiasConfidenceY,
+                             s.adaptiveGyroBiasConfidenceZ,
+                             s.adaptiveGyroBiasRollInnovationDeg,
+                             s.adaptiveGyroBiasPitchInnovationDeg,
+                             s.adaptiveGyroBiasHeadingInnovationDeg,
+                             s.adaptiveGyroBiasRejectedInnovations);
             }
             break;
             }
@@ -442,6 +454,7 @@ int main(int argc, char **argv) {
         }
         default:
             if (h.type == FUSION_LOG_G5_PACKET || h.type == FUSION_LOG_G5_RAW_ESPNOW) {
+                if (ignoreG5) break;
                 // Raw ESP-NOW records prepend the sender MAC to the G5 text.
                 // Decode them using the same field parser as decoded packets.
                 const uint8_t *g5Payload = payload;
@@ -542,6 +555,21 @@ int main(int argc, char **argv) {
     std::printf("MAGNETIC_ROLL_REFERENCE valid=%u/%u\n",
                 magneticRollReferences, g5Parsed);
     magneticRollError.print("magnetic_roll_deg");
+    std::printf("GYRO_BIAS input_deg_sec=[%.6f,%.6f,%.6f] "
+                "information=[%.3f,%.3f,%.3f] confidence=[%.3f,%.3f,%.3f] "
+                "innovation_deg=[%.3f,%.3f,%.3f] rejected=%u\n",
+                s.adaptiveGyroBiasXDegSec, s.adaptiveGyroBiasYDegSec,
+                s.adaptiveGyroBiasZDegSec,
+                s.adaptiveGyroBiasInformationXSec,
+                s.adaptiveGyroBiasInformationYSec,
+                s.adaptiveGyroBiasInformationZSec,
+                s.adaptiveGyroBiasConfidenceX,
+                s.adaptiveGyroBiasConfidenceY,
+                s.adaptiveGyroBiasConfidenceZ,
+                s.adaptiveGyroBiasRollInnovationDeg,
+                s.adaptiveGyroBiasPitchInnovationDeg,
+                s.adaptiveGyroBiasHeadingInnovationDeg,
+                s.adaptiveGyroBiasRejectedInnovations);
     if (!timedErrors.empty()) {
         uint64_t first = timedErrors.front().timestampUs;
         uint64_t last = timedErrors.back().timestampUs;
