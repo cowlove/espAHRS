@@ -58,17 +58,28 @@ def main():
     args = ap.parse_args()
     try:
         os.makedirs(args.output_dir, exist_ok=True)
-        files = selected(list_logs(args.port, args.baud), args.patterns)
+        available = list_logs(args.port, args.baud)
+        print("device log inventory (%d file%s):" %
+              (len(available), "" if len(available) == 1 else "s"))
+        for name, size in available:
+            print("  %-32s %10d bytes" % (name, size))
+        files = selected(available, args.patterns)
         if not files:
             print("device contains no .bin logs")
             return 0
-        for name, size in files:
+        print("selected %d file%s for download" %
+              (len(files), "" if len(files) == 1 else "s"))
+        for index, (name, size) in enumerate(files, 1):
             output = os.path.join(args.output_dir, os.path.basename(name))
-            print("downloading %s (%d bytes) -> %s" % (name, size, output), flush=True)
+            print("\n[%d/%d] starting %s (%d bytes) -> %s" %
+                  (index, len(files), name, size, output), flush=True)
             subprocess.run([sys.executable, os.path.join(ROOT, "dump_log.py"),
                             "--port", args.port,
                             "--file", name, "--output", output,
                             "--timeout", str(args.timeout)], check=True)
+            print("[%d/%d] completed %s" % (index, len(files), name), flush=True)
+        print("download complete: %d file%s" %
+              (len(files), "" if len(files) == 1 else "s"))
         return 0
     except (OSError, serial.SerialException, RuntimeError,
             subprocess.CalledProcessError) as exc:
