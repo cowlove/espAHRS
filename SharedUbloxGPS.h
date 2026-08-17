@@ -29,7 +29,7 @@ public:
         // The library's debug stream prints the UBX commands and ACK/NAK
         // responses, which is the only reliable way to distinguish a silent
         // UART-TX failure from a receiver-side rejection here.
-        gnss.enableDebugging(Serial, true);
+        gnss.enableDebugging(Serial, false);
         bool ok = gnss.begin(*serial);
         Serial.printf("GNSS probe baud=%lu raw_bytes=%u ubx=%s\n",
                       (unsigned long)candidate, (unsigned)rawBytes,
