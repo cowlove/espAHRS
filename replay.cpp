@@ -64,9 +64,10 @@ static bool g5Field(const uint8_t *payload, uint32_t length, const char *key, fl
     std::string needle = std::string(key) + "=";
     size_t begin = 0;
     while ((begin = text.find(needle, begin)) != std::string::npos) {
-        // Some G5 sentences place EP= immediately after the packet number
-        // (for example, "53007EP=-4.42"), without a separating space.
-        if (begin && std::strcmp(key, "EP") != 0 &&
+        // The packet sequence is immediately adjacent to the P= field, so
+        // the preceding character may be a hex digit (for example,
+        // "53007EP=-4.42" is sequence suffix E followed by P=).
+        if (begin && std::strcmp(key, "P") != 0 && std::strcmp(key, "EP") != 0 &&
             text[begin - 1] != ' ' && text[begin - 1] != '\n' && text[begin - 1] != '\r') {
             begin += needle.size(); continue;
         }
@@ -416,10 +417,7 @@ int main(int argc, char **argv) {
                 }
                 float g5Roll, g5Pitch, g5Heading, g5Slip = NAN;
                 bool haveRoll = g5Field(g5Payload, g5PayloadLength, "R", g5Roll);
-                // Current G5 attitude messages label pitch as EP= (Euler
-                // pitch); older packet formats used P=.
-                bool havePitch = g5Field(g5Payload, g5PayloadLength, "EP", g5Pitch) ||
-                                 g5Field(g5Payload, g5PayloadLength, "P", g5Pitch);
+                bool havePitch = g5Field(g5Payload, g5PayloadLength, "P", g5Pitch);
                 bool haveHeading = g5Field(g5Payload, g5PayloadLength, "HDG", g5Heading);
                 bool haveSlip = g5Field(g5Payload, g5PayloadLength, "SL", g5Slip);
                 // Administrative packets can contain unrelated fields named
