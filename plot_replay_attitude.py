@@ -48,6 +48,11 @@ def main():
     parser.add_argument("--output", help="save PNG instead of only displaying it")
     args = parser.parse_args()
 
+    if not os.path.isfile(args.bin_file):
+        parser.error(f"binary log file not found: {args.bin_file}")
+    if not os.access(args.bin_file, os.R_OK):
+        parser.error(f"binary log file is not readable: {args.bin_file}")
+
     replay = args.replay or os.path.join(os.path.dirname(__file__), "replay")
     if not os.path.isfile(replay):
         parser.error(f"replay executable not found: {replay}; run `make replay` first")

@@ -112,6 +112,14 @@ int main(int argc, char **argv) {
         std::fprintf(stderr, "usage: %s session.bin [--device-mac MAC_OR_UNIQUE_SUFFIX] [--hal geek|tbeam] [--axis-remap 9 values] [--gyro-axis-remap 9 values] [--param name=value] [--roll-csv FILE] [--pitch-csv FILE] [--imu-csv FILE] [--ignore-g5] [--list-params]\n", argv[0]);
         return 2;
     }
+    {
+        std::ifstream input(argv[1], std::ios::binary);
+        if (!input) {
+            std::fprintf(stderr, "binary log file not found or unreadable: %s\n",
+                         argv[1]);
+            return 2;
+        }
+    }
     enum class ReplayHal { Geek, TBeam } replayHal = ReplayHal::Geek;
     bool explicitHal = false, explicitDevice = false;
     FusionLogMetadataRecord logMetadata{};
