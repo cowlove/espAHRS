@@ -7,10 +7,10 @@ completed.
 It tests the onboard 1.14-inch 240x135 IPS LCD, microSD/TF slot, ESP32
 resources, and the `ReliableStreamESPNow("GEEK")` broadcast channel at 1 Hz.
 
-An external BerryIMUv3 can be connected to the I2C header. The sketch probes
-its LSM6DSL accelerometer/gyro at 0x6A, LIS3MDL magnetometer at 0x1C, and
-BMP388 at 0x77, then includes sensor health and pressure in the 1 Hz report. The
-board is external; it is not an onboard peripheral.
+An external BerryIMUv3 can be connected to the I2C header. The firmware leaves
+its secondary IMU unprobed; only the primary onboard IMU participates in live
+AHRS and health reporting. The external board remains available for separate
+bench experiments, but is not an onboard peripheral.
 
 All external sensors are optional. I2C has a 20 ms transaction timeout and
 missing devices are reported as `ABSENT`; the display and 1 Hz diagnostics

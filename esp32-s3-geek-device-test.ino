@@ -73,7 +73,6 @@ HardwareSerial gpsSerial(1);
 Adafruit_LSM9DS1 imu;
 ICM_20948_I2C icm20948;
 SensorQMI8658 qmi8658;
-SensorQMI8658 qmi8658Secondary;
 SensorQMC6310 qmc6310;
 XPowersAXP2101 pmu;
 IMUdata qmiAccel, qmiGyro;
@@ -89,13 +88,10 @@ float latestBaroPressurePa = NAN, latestBaroAltitudeM = NAN;
 uint32_t baroReadyAfterMs = 0;
 enum class ImuKind { None, LSM9DS1, ICM20948, QMI8658 };
 ImuKind imuKind = ImuKind::None;
-bool secondaryImuOk = false;
 uint32_t lastPrimaryImuSampleMs = 0;
-uint32_t lastSecondaryImuSampleMs = 0;
 uint32_t lastImuRecoveryAttemptMs = 0;
 constexpr uint32_t IMU_HEALTH_TIMEOUT_MS = 500;
 constexpr uint32_t IMU_RECOVERY_PERIOD_MS = 1000;
-constexpr uint8_t SECONDARY_LSM6DSL = 0x6A;
 constexpr uint8_t BERRY_BARO_ADDRESS = 0x77;
 constexpr uint32_t BARO_OUTPUT_PERIOD_US = 40000; // 25 Hz
 
@@ -116,37 +112,8 @@ static const char *baroKindName() {
   default: return "ABSENT";
   }
 }
-static bool secondaryLsm6Read(uint8_t reg, uint8_t *buf, size_t n) {
-  Wire.beginTransmission(SECONDARY_LSM6DSL); Wire.write(reg);
-  if (Wire.endTransmission(false) != 0 || Wire.requestFrom(SECONDARY_LSM6DSL, (uint8_t)n) != n) return false;
-  for (size_t i=0; i<n; ++i) buf[i] = Wire.read();
-  return true;
-}
-static bool secondaryLsm6Write(uint8_t reg, uint8_t value) {
-  Wire.beginTransmission(SECONDARY_LSM6DSL); Wire.write(reg); Wire.write(value);
-  return Wire.endTransmission() == 0;
-}
 static bool probePrimaryIcm();
 extern bool imuOk;
-static bool configureSecondaryLsm6() {
-  uint8_t whoAmI = 0;
-  if (!secondaryLsm6Read(0x0F, &whoAmI, 1) || whoAmI != 0x6A) return false;
-  return secondaryLsm6Write(0x12, 0x44) &&
-         secondaryLsm6Write(0x11, 0x40) &&
-         secondaryLsm6Write(0x10, 0x42);
-}
-static bool readSecondaryLsm6(float &gx, float &gy, float &gz,
-                              float &ax, float &ay, float &az, float &temp) {
-  uint8_t b[12], t[2];
-  if (!secondaryLsm6Read(0x22, b, sizeof(b))) return false;
-  auto s16 = [](uint8_t lo, uint8_t hi) { return (int16_t)((uint16_t)lo | ((uint16_t)hi << 8)); };
-  gx = s16(b[0],b[1]) * 0.00875f; gy = s16(b[2],b[3]) * 0.00875f; gz = s16(b[4],b[5]) * 0.00875f;
-  constexpr float accelMps2PerLsb = 0.000061f * 9.80665f;
-  ax = s16(b[6],b[7]) * accelMps2PerLsb; ay = s16(b[8],b[9]) * accelMps2PerLsb;
-  az = s16(b[10],b[11]) * accelMps2PerLsb;
-  temp = secondaryLsm6Read(0x20, t, 2) ? 25.0f + s16(t[0],t[1]) / 256.0f : NAN;
-  return true;
-}
 
 static bool imuRecentlyHealthy(uint32_t lastSampleMs, uint32_t nowMs) {
   return lastSampleMs != 0 && (uint32_t)(nowMs - lastSampleMs) <= IMU_HEALTH_TIMEOUT_MS;
@@ -161,11 +128,6 @@ static void recoverGeekImus(uint32_t nowMs) {
     bool wasDetected = imuOk;
     imuOk = probePrimaryIcm();
     if (imuOk && !wasDetected) Serial.println("IMU1 ICM-20948 detected/recovered");
-  }
-  if (!imuRecentlyHealthy(lastSecondaryImuSampleMs, nowMs)) {
-    bool wasDetected = secondaryImuOk;
-    secondaryImuOk = configureSecondaryLsm6();
-    if (secondaryImuOk && !wasDetected) Serial.println("IMU2 LSM6DSL detected/recovered");
   }
 }
 
@@ -378,7 +340,6 @@ void halUpdateDisplay(const HalDisplayStatus &status) {
   display.printf("P%.1f ", status.gpsPdop);
   display.setTextColor(status.compass ? ST77XX_GREEN : ST77XX_RED); display.print("CP ");
   display.setTextColor(status.imu1 ? ST77XX_GREEN : ST77XX_RED); display.print("I1 ");
-  display.setTextColor(status.imu2 ? ST77XX_GREEN : ST77XX_RED); display.print("I2 ");
   display.setTextColor(status.sd ? ST77XX_GREEN : ST77XX_RED); display.print("SD ");
   display.setTextColor(status.g5 ? ST77XX_GREEN : ST77XX_RED); display.print("G5");
 
@@ -657,8 +618,8 @@ void handleSerialCommands() {
         if (gyroDrift.active) gyroDrift.stop(millis());
         else Serial.println("GYRO_DRIFT ALREADY_STOPPED");
       } else if (command.equalsIgnoreCase("GYRO_DRIFT_STATUS")) {
-        Serial.printf("GYRO_DRIFT STATUS active=%s secondary=%s elapsed_s=%.3f\n",
-                      gyroDrift.active ? "yes" : "no", secondaryImuOk ? "yes" : "no",
+        Serial.printf("GYRO_DRIFT STATUS active=%s elapsed_s=%.3f\n",
+                      gyroDrift.active ? "yes" : "no",
                       gyroDrift.active ? (millis()-gyroDrift.startedMs)*0.001f : 0.0f);
       } else if (command.length()) {
         Serial.println("LOG_ERROR UNKNOWN_COMMAND");
@@ -706,17 +667,9 @@ void setupBerryIMU() {
   // the ESP32-S3 defaults can overlap the LCD's DC/RESET pins (8/9).
   Wire.begin(HARDWARE.i2cSda, HARDWARE.i2cScl);
   Wire.setTimeOut(20); // Missing Qwiic hardware must never stall the test.
-  uint8_t secondaryWhoAmI = 0;
-  // The externally powered BerryIMU can become ready slightly after the ESP32
-  // I2C controller. Do not permanently lose IMU1 because the first transaction
-  // after boot happened during that interval.
-  for (uint8_t attempt = 0; attempt < 20 && !secondaryImuOk; ++attempt) {
-    secondaryImuOk = secondaryLsm6Read(0x0F, &secondaryWhoAmI, 1) &&
-                     secondaryWhoAmI == 0x6A;
-    if (!secondaryImuOk) delay(25);
-  }
-  if (secondaryImuOk) secondaryImuOk = configureSecondaryLsm6();
-  Serial.printf("Secondary LSM6DSL address=0x6A: %s (WHO_AM_I=0x%02X)\n", secondaryImuOk ? "OK" : "not detected", secondaryWhoAmI);
+  // The external secondary IMU is intentionally not probed.  IMU0 is the
+  // only production sensor used by the AHRS; leaving the optional device
+  // untouched avoids unnecessary I2C traffic and ambiguous health reporting.
   if (HARDWARE.kind == HalBoardKind::TBeamSupreme) {
   Serial.println("T-Beam I2C scan SDA=17 SCL=18");
   // Include 0x7C: the LilyGO QMC63xx example defines QMC6309 there.
@@ -1080,18 +1033,6 @@ void loop() {
   }
 afterPrimaryImu:
   float secondaryTemp = NAN;
-  if (secondaryImuOk) {
-    float sgx, sgy, sgz, sax, say, saz;
-    uint64_t secondaryNowUs = micros();
-    if (readSecondaryLsm6(sgx, sgy, sgz, sax, say, saz, secondaryTemp)) {
-      lastSecondaryImuSampleMs = millis();
-      gyroDrift.add(1, sgx, sgy, sgz);
-      if (sessionLog.active()) sessionLog.appendImu(1, secondaryNowUs,
-        sgx, sgy, sgz, sax, say, saz,
-        isfinite(sgx) && isfinite(sgy) && isfinite(sgz) &&
-        isfinite(sax) && isfinite(say) && isfinite(saz));
-    }
-  }
   if (gyroDrift.active) {
     float primaryTemp = imuKind == ImuKind::QMI8658 ? qmi8658.getTemperature_C() : NAN;
     gyroDrift.update(millis(), primaryTemp, secondaryTemp);
@@ -1129,11 +1070,10 @@ afterPrimaryImu:
       pressure = latestBaroPressurePa / 100.0f;
     }
     bool imu1Healthy = imuRecentlyHealthy(lastPrimaryImuSampleMs, last);
-    bool imu2Healthy = imuRecentlyHealthy(lastSecondaryImuSampleMs, last);
-    snprintf(packet, sizeof(packet), "%s TEST=1 MILLIS=%lu LCD=%s SD=%s GPS=%s QMC=%s I1=%s I2=%s BARO=%s P=%.1f\n",
+    snprintf(packet, sizeof(packet), "%s TEST=1 MILLIS=%lu LCD=%s SD=%s GPS=%s QMC=%s I1=%s BARO=%s P=%.1f\n",
              HARDWARE.name, (unsigned long)last, displayOk ? "OK" : "FAIL", sdOk ? "OK" : "ABSENT",
              gpsOk ? "OK" : "ABSENT", qmcPOk ? "QMC5883P" : qmcOk ? "QMC6310N" : "ABSENT",
-             imu1Healthy ? "OK" : "BAD", imu2Healthy ? "OK" : "BAD",
+             imu1Healthy ? "OK" : "BAD",
              baroOk ? "OK" : "ABSENT", pressure);
     espnow.write(packet, true);
     Serial.print(packet);
@@ -1148,7 +1088,7 @@ afterPrimaryImu:
                   fused.adaptiveGyroBiasZDegSec);
     const AircraftAHRS::State &displayState = ahrs.state(last);
     HalDisplayStatus status{
-      gpsOk, imu1Healthy, imu2Healthy, baroOk, qmcOk || qmcPOk, sdOk, sessionLog.active(),
+      gpsOk, imu1Healthy, baroOk, qmcOk || qmcPOk, sdOk, sessionLog.active(),
       lastG5PacketMs != 0 && (last - lastG5PacketMs) < 2000,
       gpsFixQuality, gpsSatellites, gpsPdop, pressure,
       displayState.rollDeg, displayState.pitchDeg, displayState.headingDeg,

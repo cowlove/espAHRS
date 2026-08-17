@@ -112,7 +112,9 @@ changing the application.
 At startup the GEEK firmware probes the ICM-20948 at both possible addresses,
 then falls back to the LSM9DS1. The selected device's accelerometer, gyro, and
 magnetometer are normalized into the existing IMU and compass-0 log records;
-the device name is shown on the status display and serial startup line.
+the device name is shown on the status display and serial startup line. The
+optional secondary BerryIMU is intentionally not probed or shown in the
+display status; IMU0 is the only live AHRS sensor.
 
 The non-blocking logger records raw G5 ESP-NOW frames, decoded G5 packets, IMU
 samples, compass samples, GPS PVT records, and barometer samples when those
