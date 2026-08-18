@@ -81,8 +81,131 @@ uint8_t tbeamDisplayAddress = 0;
 Adafruit_BMP280 baro;
 Adafruit_BMP3XX bmp3;
 Adafruit_BME280 bme;
+class MS5837Sensor {
+  uint16_t c[7]{};
+  bool is02BA = false;
+  enum class State { Idle, WaitD1, WaitD2 } state = State::Idle;
+  uint32_t deadlineMs = 0;
+  uint32_t d1 = 0;
+  uint32_t d2Raw = 0;
+  bool rawReady = false;
+  float completedPressurePa = NAN;
+  bool completed = false;
+  bool writeCommand(uint8_t command) {
+    Wire.beginTransmission(0x76); Wire.write(command);
+    return Wire.endTransmission() == 0;
+  }
+  bool readWord(uint8_t command, uint16_t &value) {
+    if (!writeCommand(command) || Wire.requestFrom((uint8_t)0x76, (uint8_t)2) != 2) return false;
+    value = ((uint16_t)Wire.read() << 8) | Wire.read();
+    return true;
+  }
+  bool startConversion(uint8_t command) {
+    return writeCommand(command);
+  }
+  bool readAdc(uint32_t &value) {
+    if (!writeCommand(0x00) || Wire.requestFrom((uint8_t)0x76, (uint8_t)3) != 3) {
+      return false;
+    }
+    value = ((uint32_t)Wire.read() << 16) | ((uint32_t)Wire.read() << 8) | Wire.read();
+    return true;
+  }
+public:
+  bool begin() {
+    Wire.beginTransmission(0x76); Wire.write(0x1E);
+    if (Wire.endTransmission() != 0) return false;
+    delay(3);
+    bool nonzero = false;
+    for (uint8_t i = 1; i <= 6; ++i) {
+      if (!readWord(0xA0 + 2 * i, c[i])) return false;
+      nonzero |= c[i] != 0 && c[i] != 0xFFFF;
+    }
+    if (!nonzero) return false;
+    // MS5837 model selection follows the reference library: C1 > 37000 is 02BA.
+    is02BA = c[1] > 37000 && c[1] <= 49000;
+    state = State::Idle;
+    return true;
+  }
+  void service(uint32_t nowMs) {
+    if (state == State::Idle) {
+      if (startConversion(0x4A)) { // D1, OSR 8192
+        deadlineMs = nowMs + 30;
+        state = State::WaitD1;
+      }
+      return;
+    }
+    if ((int32_t)(nowMs - deadlineMs) < 0) return;
+    if (state == State::WaitD1) {
+      if (readAdc(d1) && startConversion(0x5A)) { // D2, OSR 8192
+        deadlineMs = nowMs + 30;
+        state = State::WaitD2;
+      } else {
+        state = State::Idle;
+      }
+      return;
+    }
+    uint32_t d2 = 0;
+    if (!readAdc(d2)) {
+      state = State::Idle;
+      return;
+    }
+    d2Raw = d2;
+    rawReady = true;
+    int32_t dT = (int32_t)d2 - (int32_t)c[5] * 256;
+    int64_t temp = 2000LL + ((int64_t)dT * c[6]) / 8388608LL;
+    int64_t off, sens;
+    if (is02BA) {
+      off = (int64_t)c[2] * 131072LL + ((int64_t)c[4] * dT) / 64LL;
+      sens = (int64_t)c[1] * 65536LL + ((int64_t)c[3] * dT) / 128LL;
+    } else {
+      off = (int64_t)c[2] * 65536LL + ((int64_t)c[4] * dT) / 128LL;
+      sens = (int64_t)c[1] * 32768LL + ((int64_t)c[3] * dT) / 256LL;
+    }
+    int64_t off2 = 0, sens2 = 0, ti = 0;
+    if (is02BA) {
+      if (temp < 2000) {
+        ti = (11LL * dT * dT) / 34359738368LL;
+        off2 = (31LL * (temp - 2000) * (temp - 2000)) / 8LL;
+        sens2 = (63LL * (temp - 2000) * (temp - 2000)) / 32LL;
+      }
+    } else if (temp < 2000) {
+      ti = (3LL * dT * dT) / 8589934592LL;
+      off2 = (3LL * (temp - 2000) * (temp - 2000)) / 2LL;
+      sens2 = (5LL * (temp - 2000) * (temp - 2000)) / 8LL;
+      if (temp < -1500) {
+        off2 += 7LL * (temp + 1500) * (temp + 1500);
+        sens2 += 4LL * (temp + 1500) * (temp + 1500);
+      }
+    } else {
+      ti = 2LL * dT * dT / 137438953472LL;
+      off2 = (temp - 2000) * (temp - 2000) / 16LL;
+    }
+    temp -= ti;
+    int64_t pressureMbar = (((int64_t)d1 * (sens - sens2)) / 2097152LL - (off - off2)) / (is02BA ? 32768LL : 8192LL);
+    completedPressurePa = (float)pressureMbar * 100.0f;
+    completed = pressureMbar > 0;
+    state = State::Idle;
+  }
+  bool takePressure(float &pressurePa) {
+    if (!completed) return false;
+    pressurePa = completedPressurePa;
+    completed = false;
+    return true;
+  }
+  bool takeRaw(FusionBaroRawRecord &record) {
+    if (!rawReady) return false;
+    record.timestampUs = micros();
+    record.d1 = d1;
+    record.d2 = d2Raw;
+    memcpy(record.c, c, sizeof(c));
+    record.model = is02BA ? 1 : 0;
+    rawReady = false;
+    return true;
+  }
+};
+MS5837Sensor ms5837;
 bool bmeOk = false;
-enum class BaroKind { None, BMP280, BMP388, BMP390, BME280 };
+enum class BaroKind { None, BMP280, BMP388, BMP390, BME280, MS5837 };
 BaroKind baroKind = BaroKind::None;
 float latestBaroPressurePa = NAN, latestBaroAltitudeM = NAN;
 uint32_t baroReadyAfterMs = 0;
@@ -90,6 +213,12 @@ enum class ImuKind { None, LSM9DS1, ICM20948, QMI8658 };
 ImuKind imuKind = ImuKind::None;
 uint32_t lastPrimaryImuSampleMs = 0;
 uint32_t lastImuRecoveryAttemptMs = 0;
+uint32_t imuDiagWindowStartMs = 0, imuDiagLastSampleUs = 0;
+uint32_t imuDiagReady = 0, imuDiagValid = 0, imuDiagInvalid = 0;
+uint32_t imuDiagGapsOver20ms = 0, imuDiagGapsOver50ms = 0, imuDiagMaxGapUs = 0;
+uint32_t compassDiagReads = 0, compassDiagValid = 0, compassDiagInvalid = 0;
+uint32_t compassDiagLastUs = 0, compassDiagGapsOver20ms = 0;
+uint32_t compassDiagGapsOver50ms = 0, compassDiagMaxGapUs = 0;
 constexpr uint32_t IMU_HEALTH_TIMEOUT_MS = 500;
 constexpr uint32_t IMU_RECOVERY_PERIOD_MS = 1000;
 constexpr uint8_t BERRY_BARO_ADDRESS = 0x77;
@@ -109,6 +238,7 @@ static const char *baroKindName() {
   case BaroKind::BMP388: return "BMP388";
   case BaroKind::BMP390: return "BMP390";
   case BaroKind::BME280: return "BME280";
+  case BaroKind::MS5837: return "MS5837";
   default: return "ABSENT";
   }
 }
@@ -171,6 +301,7 @@ struct GyroDriftLogger {
 };
 GyroDriftLogger gyroDrift;
 bool displayOk = false, sdOk = false, imuOk = false, baroOk = false, qmcOk = false;
+bool baroDataHealthy = false;
 bool qmcPOk = false;
 bool gpsOk = false;
 uint8_t gpsFixQuality = 0;
@@ -249,6 +380,7 @@ void setupDisplay() {
   if (HARDWARE.display == HalDisplayKind::None) return;
   if (HARDWARE.display == HalDisplayKind::TBeamSupreme_SH1106) {
   Wire.begin(HARDWARE.i2cSda, HARDWARE.i2cScl);
+  Wire.setClock(20000); // Conservative rate for marginal external wiring.
   Wire.setTimeOut(20);
   // Both addresses ACK on this board. Test 0x3D first: it is the alternate
   // SH1106 address and selecting 0x3C produced no visible pixels.
@@ -340,6 +472,7 @@ void halUpdateDisplay(const HalDisplayStatus &status) {
   display.printf("P%.1f ", status.gpsPdop);
   display.setTextColor(status.compass ? ST77XX_GREEN : ST77XX_RED); display.print("CP ");
   display.setTextColor(status.imu1 ? ST77XX_GREEN : ST77XX_RED); display.print("I1 ");
+  display.setTextColor(status.baro ? ST77XX_GREEN : ST77XX_RED); display.print("BR ");
   display.setTextColor(status.sd ? ST77XX_GREEN : ST77XX_RED); display.print("SD ");
   display.setTextColor(status.g5 ? ST77XX_GREEN : ST77XX_RED); display.print("G5");
 
@@ -666,6 +799,7 @@ void setupBerryIMU() {
   // Waveshare's Geek I2C example uses GPIO16/17. Explicit pins are required:
   // the ESP32-S3 defaults can overlap the LCD's DC/RESET pins (8/9).
   Wire.begin(HARDWARE.i2cSda, HARDWARE.i2cScl);
+  Wire.setClock(20000); // Conservative rate for marginal external wiring.
   Wire.setTimeOut(20); // Missing Qwiic hardware must never stall the test.
   // The external secondary IMU is intentionally not probed.  IMU0 is the
   // only production sensor used by the AHRS; leaving the optional device
@@ -768,6 +902,10 @@ void setupBerryIMU() {
                   ICM_RATE_PROFILE.gyroOdrHz, ICM_RATE_PROFILE.accelOdrHz,
                   ICM_RATE_PROFILE.ahrsIntegrationDtSec);
   }
+  baroOk = ms5837.begin();
+  if (baroOk) {
+    baroKind = BaroKind::MS5837;
+  } else {
   baroOk = baro.begin(0x76);
   if (!baroOk) baroOk = baro.begin(0x77);
   if (baroOk) {
@@ -790,6 +928,7 @@ void setupBerryIMU() {
       // keep them out of altitude/climb state until the compensation settles.
       baroReadyAfterMs = millis() + 2500;
     }
+  }
   }
   if (imuKind == ImuKind::LSM9DS1) {
     imu.setupAccel(imu.LSM9DS1_ACCELRANGE_4G, imu.LSM9DS1_ACCELDATARATE_119HZ);
@@ -950,6 +1089,15 @@ void loop() {
     float qx, qy, qz;
     bool valid = readQmc5883p(qx, qy, qz);
     uint32_t sampleUs = micros();
+    ++compassDiagReads;
+    if (compassDiagLastUs) {
+      uint32_t gapUs = sampleUs - compassDiagLastUs;
+      if (gapUs > compassDiagMaxGapUs) compassDiagMaxGapUs = gapUs;
+      if (gapUs > 20000) ++compassDiagGapsOver20ms;
+      if (gapUs > 50000) ++compassDiagGapsOver50ms;
+    }
+    compassDiagLastUs = sampleUs;
+    if (valid) ++compassDiagValid; else ++compassDiagInvalid;
     if ((int32_t)(sampleUs - nextCompass1SampleUs) >= 0) {
       nextCompass1SampleUs = sampleUs + COMPASS1_OUTPUT_PERIOD_US;
       uint64_t nowUs = sampleUs;
@@ -983,6 +1131,11 @@ void loop() {
     Serial.printf("G5_PACKET len=%u\n", (unsigned)g5Packet.size());
   }
   recoverGeekImus(millis());
+  if (baroOk && baroKind == BaroKind::MS5837) ms5837.service(millis());
+  if (baroKind == BaroKind::MS5837 && sessionLog.active()) {
+    FusionBaroRawRecord raw{};
+    if (ms5837.takeRaw(raw)) sessionLog.appendBaroRaw(raw);
+  }
   if (imuOk) {
     sensors_event_t accel, gyro, mag;
     float ax, ay, az, gx, gy, gz, mx, my, mz;
@@ -995,6 +1148,7 @@ void loop() {
       mx = my = mz = NAN;
     } else if (imuKind == ImuKind::ICM20948) {
       if (!icm20948.dataReady()) goto afterPrimaryImu;
+      ++imuDiagReady;
       icm20948.getAGMT();
       // SparkFun's accX/Y/Z accessors return milli-g, not g or m/s^2.
       // Convert to the SI units expected by AircraftAHRS and the log format.
@@ -1009,6 +1163,14 @@ void loop() {
     }
     uint64_t nowUs = micros();
     bool imuSampleValid = isfinite(ax) && isfinite(ay) && isfinite(az) && isfinite(gx) && isfinite(gy) && isfinite(gz);
+    if (imuDiagLastSampleUs) {
+      uint32_t gapUs = (uint32_t)nowUs - imuDiagLastSampleUs;
+      if (gapUs > imuDiagMaxGapUs) imuDiagMaxGapUs = gapUs;
+      if (gapUs > 20000) ++imuDiagGapsOver20ms;
+      if (gapUs > 50000) ++imuDiagGapsOver50ms;
+    }
+    imuDiagLastSampleUs = (uint32_t)nowUs;
+    if (imuSampleValid) ++imuDiagValid; else ++imuDiagInvalid;
     if (imuSampleValid) lastPrimaryImuSampleMs = millis();
     bool compass0Valid = isfinite(mx) && isfinite(my) && isfinite(mz);
     gyroDrift.add(0, gx, gy, gz);
@@ -1038,10 +1200,12 @@ afterPrimaryImu:
     gyroDrift.update(millis(), primaryTemp, secondaryTemp);
   }
   uint32_t baroSampleUs = micros();
-  if (baroOk && (int32_t)(baroSampleUs - nextBaroSampleUs) >= 0) {
+  float pressurePa = NAN;
+  bool baroDue = baroKind == BaroKind::MS5837 ? ms5837.takePressure(pressurePa)
+                                               : (int32_t)(baroSampleUs - nextBaroSampleUs) >= 0;
+  if (baroOk && baroDue) {
     nextBaroSampleUs = baroSampleUs + BARO_OUTPUT_PERIOD_US;
     bool readOk = true;
-    float pressurePa;
     if (baroKind == BaroKind::BME280) pressurePa = bme.readPressure();
     else if (baroKind == BaroKind::BMP280) pressurePa = baro.readPressure();
     else {
@@ -1054,6 +1218,7 @@ afterPrimaryImu:
                    (int32_t)(millis() - baroReadyAfterMs) >= 0;
     bool valid = settled && readOk && isfinite(pressurePa) &&
                  isfinite(altitudeM) && pressurePa > 0.0f;
+    baroDataHealthy = valid;
     if (valid) {
       latestBaroPressurePa = pressurePa;
       latestBaroAltitudeM = altitudeM;
@@ -1064,6 +1229,7 @@ afterPrimaryImu:
   }
   if (millis() - last >= 1000) {
     last = millis();
+    if (!imuDiagWindowStartMs) imuDiagWindowStartMs = last;
     char packet[128];
     float pressure = 0.0f;
     if (baroOk) {
@@ -1077,6 +1243,21 @@ afterPrimaryImu:
              baroOk ? "OK" : "ABSENT", pressure);
     espnow.write(packet, true);
     Serial.print(packet);
+    if ((uint32_t)(last - imuDiagWindowStartMs) >= 30000) {
+      Serial.printf("IMU30 ready=%lu valid=%lu invalid=%lu gap20=%lu gap50=%lu maxGapMs=%.2f "
+                    "C reads=%lu valid=%lu invalid=%lu gap20=%lu gap50=%lu maxGapMs=%.2f\n",
+                    (unsigned long)imuDiagReady, (unsigned long)imuDiagValid,
+                    (unsigned long)imuDiagInvalid, (unsigned long)imuDiagGapsOver20ms,
+                    (unsigned long)imuDiagGapsOver50ms, imuDiagMaxGapUs / 1000.0f,
+                    (unsigned long)compassDiagReads, (unsigned long)compassDiagValid,
+                    (unsigned long)compassDiagInvalid, (unsigned long)compassDiagGapsOver20ms,
+                    (unsigned long)compassDiagGapsOver50ms, compassDiagMaxGapUs / 1000.0f);
+      imuDiagWindowStartMs = last;
+      imuDiagReady = imuDiagValid = imuDiagInvalid = 0;
+      imuDiagGapsOver20ms = imuDiagGapsOver50ms = imuDiagMaxGapUs = 0;
+      compassDiagReads = compassDiagValid = compassDiagInvalid = 0;
+      compassDiagGapsOver20ms = compassDiagGapsOver50ms = compassDiagMaxGapUs = 0;
+    }
     const AircraftAHRS::State &fused = ahrs.state(millis());
     Serial.printf("AHRS roll=%.1f pitch=%.1f heading=%.1f baroAlt=%.1f climb=%.2f gyroBias=%s/%.1fs[%.4f,%.4f,%.4f]\n",
                   fused.rollDeg, fused.pitchDeg, fused.headingDeg,
@@ -1088,7 +1269,7 @@ afterPrimaryImu:
                   fused.adaptiveGyroBiasZDegSec);
     const AircraftAHRS::State &displayState = ahrs.state(last);
     HalDisplayStatus status{
-      gpsOk, imu1Healthy, baroOk, qmcOk || qmcPOk, sdOk, sessionLog.active(),
+      gpsOk, imu1Healthy, baroDataHealthy, qmcOk || qmcPOk, sdOk, sessionLog.active(),
       lastG5PacketMs != 0 && (last - lastG5PacketMs) < 2000,
       gpsFixQuality, gpsSatellites, gpsPdop, pressure,
       displayState.rollDeg, displayState.pitchDeg, displayState.headingDeg,

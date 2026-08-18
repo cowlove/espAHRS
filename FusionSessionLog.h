@@ -219,6 +219,9 @@ public:
         FusionBaroRecord r{t, pressure, altitude, (uint8_t)(valid ? 1 : 0)};
         return append(FUSION_LOG_BARO, t, &r, sizeof(r));
     }
+    bool appendBaroRaw(const FusionBaroRawRecord &r) {
+        return append(FUSION_LOG_BARO_RAW, r.timestampUs, &r, sizeof(r));
+    }
     bool appendCompass(uint8_t source, uint64_t t, float x, float y, float z, bool valid = true) {
         if (source > 3) return false;
         FusionCompassRecord r{t, x, y, z, (uint8_t)(valid ? 1 : 0)};

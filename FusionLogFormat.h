@@ -11,6 +11,7 @@ enum FusionLogType : uint8_t { FUSION_LOG_EVENT=1, FUSION_LOG_G5_RAW_ESPNOW=2,
     FUSION_LOG_IMU1=9, FUSION_LOG_IMU2=10, FUSION_LOG_IMU3=11,
     FUSION_LOG_COMPASS2=12, FUSION_LOG_COMPASS3=13,
     FUSION_LOG_METADATA=14,
+    FUSION_LOG_BARO_RAW=15,
     FUSION_LOG_IMU=FUSION_LOG_IMU0 };
 
 inline FusionLogType fusionImuLogType(uint8_t source) {
@@ -44,6 +45,9 @@ struct FusionImuRecord { uint64_t timestampUs; float gyroX, gyroY, gyroZ;
 struct FusionGpsRecord { uint32_t timestampMs; int32_t latitudeE7, longitudeE7;
     int32_t altitudeMm; uint32_t groundSpeedMmps; int32_t headingE5; uint8_t fixValid; };
 struct FusionBaroRecord { uint64_t timestampUs; float pressurePa, altitudeM; uint8_t valid; };
+// Raw MS5837 conversion and PROM data are retained even when compensation is
+// invalid, allowing offline reconstruction after a sensor/model diagnosis.
+struct FusionBaroRawRecord { uint64_t timestampUs; uint32_t d1, d2; uint16_t c[7]; uint8_t model; };
 struct FusionCompassRecord { uint64_t timestampUs; float x, y, z; uint8_t valid; };
 constexpr uint32_t FUSION_LOG_FORMAT_VERSION = 2;
 struct FusionLogMetadataRecord {
