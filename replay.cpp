@@ -235,7 +235,7 @@ int main(int argc, char **argv) {
         if (std::strcmp(argv[i], "--imu-csv") == 0 && i + 1 < argc) {
             imuCsv = std::fopen(argv[++i], "w");
             if (!imuCsv) { std::perror("--imu-csv"); return 1; }
-                std::fprintf(imuCsv, "time_s,dt_s,raw_gyro_x_deg_sec,raw_gyro_y_deg_sec,raw_gyro_z_deg_sec,body_pitch_rate_deg_sec,yaw_rate_deg_sec,pitch_q_contribution_deg_sec,pitch_yaw_coupling_deg_sec,gyro_pitch_delta_deg,accel_pitch_correction_delta_deg,gps_pitch_correction_delta_deg,ahrs_roll,ahrs_pitch,gyro_sample_accepted,adaptive_bias_qualified,adaptive_bias_qualifying_sec,adaptive_bias_x_deg_sec,adaptive_bias_y_deg_sec,adaptive_bias_z_deg_sec,adaptive_candidate_x_deg_sec,adaptive_candidate_y_deg_sec,adaptive_candidate_z_deg_sec,adaptive_stddev_x_deg_sec,adaptive_stddev_y_deg_sec,adaptive_stddev_z_deg_sec,adaptive_information_x_sec,adaptive_information_y_sec,adaptive_information_z_sec,adaptive_confidence_x,adaptive_confidence_y,adaptive_confidence_z,adaptive_roll_innovation_deg,adaptive_pitch_innovation_deg,adaptive_heading_innovation_deg,adaptive_rejected_innovations\n");
+                std::fprintf(imuCsv, "time_s,dt_s,raw_gyro_x_deg_sec,raw_gyro_y_deg_sec,raw_gyro_z_deg_sec,body_pitch_rate_deg_sec,yaw_rate_deg_sec,pitch_q_contribution_deg_sec,pitch_yaw_coupling_deg_sec,gyro_pitch_delta_deg,accel_pitch_correction_delta_deg,gps_pitch_correction_delta_deg,ahrs_roll,ahrs_pitch,gyro_sample_accepted,adaptive_bias_qualified,adaptive_bias_qualifying_sec,adaptive_bias_x_deg_sec,adaptive_bias_y_deg_sec,adaptive_bias_z_deg_sec,adaptive_candidate_x_deg_sec,adaptive_candidate_y_deg_sec,adaptive_candidate_z_deg_sec,adaptive_stddev_x_deg_sec,adaptive_stddev_y_deg_sec,adaptive_stddev_z_deg_sec,adaptive_information_x_sec,adaptive_information_y_sec,adaptive_information_z_sec,adaptive_confidence_x,adaptive_confidence_y,adaptive_confidence_z,adaptive_roll_innovation_deg,adaptive_pitch_innovation_deg,adaptive_heading_innovation_deg,adaptive_rejected_innovations,observed_mean_dt_s,effective_integration_dt_s,gyro_cadence_qualified\n");
             continue;
         }
         if (std::strcmp(argv[i], "--param") == 0 && i + 1 < argc) ++i;
@@ -399,7 +399,7 @@ int main(int argc, char **argv) {
             }
             if (imuCsv) {
                 const auto &s = ahrs.state(nowMs);
-                std::fprintf(imuCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%u\n",
+                std::fprintf(imuCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%u,%.6f,%.6f,%d\n",
                              h.timestampUs * 1.0e-6, s.lastImuDtSec,
                              r.gyroX, r.gyroY, r.gyroZ,
                              s.lastPitchBodyRateDegSec, s.lastYawBodyRateDegSec,
@@ -430,7 +430,10 @@ int main(int argc, char **argv) {
                              s.adaptiveGyroBiasRollInnovationDeg,
                              s.adaptiveGyroBiasPitchInnovationDeg,
                              s.adaptiveGyroBiasHeadingInnovationDeg,
-                             s.adaptiveGyroBiasRejectedInnovations);
+                             s.adaptiveGyroBiasRejectedInnovations,
+                             s.observedMeanImuDtSec,
+                             s.effectiveGyroIntegrationDtSec,
+                             s.gyroCadenceQualified ? 1 : 0);
             }
             break;
             }

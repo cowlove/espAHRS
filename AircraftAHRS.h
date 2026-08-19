@@ -40,6 +40,14 @@ public:
         float gyroRateLimitDegSec = 60.0f;
         // Fixed per-sample gyro integration weight. Zero uses measured dt.
         float gyroIntegrationDtSec = 0.020f;
+        // Adapt the fixed integration weight to the robust observed cadence.
+        // Individual timestamp gaps are never used directly as gyro weights.
+        bool adaptiveGyroIntegrationDtEnabled = true;
+        float gyroCadenceQualificationSec = 3.0f;
+        float gyroCadenceFilterTimeSec = 20.0f;
+        float gyroCadenceMinimumDtSec = 0.010f;
+        float gyroCadenceMaximumDtSec = 0.050f;
+        float gyroCadenceMaximumObservedGapSec = 0.100f;
         // Boot-local slow integral observer. Attitude correction-target
         // innovations are projected through the Euler-rate and installed-
         // sensor rotation Jacobians back into the AHRS input gyro axes.
@@ -168,6 +176,9 @@ public:
         uint32_t baroAgeMs = UINT32_MAX;
         uint32_t accelerometerSampleAgeMs = UINT32_MAX;
         float lastImuDtSec = 0;
+        float observedMeanImuDtSec = 0;
+        float effectiveGyroIntegrationDtSec = 0;
+        bool gyroCadenceQualified = false;
         float lastPitchGyroDeltaDeg = 0;
         float lastPitchAccelCorrectionDeltaDeg = 0;
         float lastPitchGpsCorrectionDeltaDeg = 0;
@@ -280,6 +291,10 @@ private:
     float adaptiveGyroBias_[3] = {0, 0, 0};
     float adaptiveGyroBiasInformation_[3] = {0, 0, 0};
     uint32_t adaptiveGyroBiasRejectedInnovations_ = 0;
+    float gyroCadenceMeanDtSec_ = 0.0f;
+    float gyroCadenceAccumulatedDtSec_ = 0.0f;
+    uint32_t gyroCadenceSampleCount_ = 0;
+    bool gyroCadenceQualified_ = false;
 
     static float wrap180(float degrees);
     static float wrap360(float degrees);

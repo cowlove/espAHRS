@@ -79,6 +79,11 @@ struct ReplayConfig {
             {"gyro_gain_z", &ahrs.gyroGainZ},
             {"gyro_rate_limit_deg_sec", &ahrs.gyroRateLimitDegSec},
             {"gyro_integration_dt_sec", &ahrs.gyroIntegrationDtSec},
+            {"gyro_cadence_qualification_sec", &ahrs.gyroCadenceQualificationSec},
+            {"gyro_cadence_filter_sec", &ahrs.gyroCadenceFilterTimeSec},
+            {"gyro_cadence_min_dt_sec", &ahrs.gyroCadenceMinimumDtSec},
+            {"gyro_cadence_max_dt_sec", &ahrs.gyroCadenceMaximumDtSec},
+            {"gyro_cadence_max_gap_sec", &ahrs.gyroCadenceMaximumObservedGapSec},
             {"adaptive_gyro_bias_qualification_sec", &ahrs.adaptiveGyroBiasQualificationTimeSec},
             {"adaptive_gyro_bias_learning_sec", &ahrs.adaptiveGyroBiasLearningTimeSec},
             {"adaptive_gyro_bias_mean_sec", &ahrs.adaptiveGyroBiasMeanTimeSec},
@@ -125,6 +130,9 @@ struct ReplayConfig {
         if (std::strcmp(name, "adaptive_gyro_bias_enabled") == 0) {
             ahrs.adaptiveGyroBiasEnabled = value != 0.0f; return true;
         }
+        if (std::strcmp(name, "adaptive_gyro_integration_dt_enabled") == 0) {
+            ahrs.adaptiveGyroIntegrationDtEnabled = value != 0.0f; return true;
+        }
         if (std::strcmp(name, "g5_heading_offset_deg") == 0) {
             g5HeadingOffsetDeg = value; return true;
         }
@@ -166,6 +174,9 @@ struct ReplayConfig {
                    "gyro_axis_sign_x gyro_axis_sign_y gyro_axis_sign_z "
                    "gyro_rate_limit_deg_sec "
                    "gyro_integration_dt_sec "
+                   "adaptive_gyro_integration_dt_enabled gyro_cadence_qualification_sec "
+                   "gyro_cadence_filter_sec gyro_cadence_min_dt_sec "
+                   "gyro_cadence_max_dt_sec gyro_cadence_max_gap_sec "
                    "adaptive_gyro_bias_qualification_sec adaptive_gyro_bias_learning_sec "
                    "adaptive_gyro_bias_mean_sec adaptive_gyro_bias_max_deg_sec "
                    "adaptive_gyro_bias_max_body_rate_deg_sec "

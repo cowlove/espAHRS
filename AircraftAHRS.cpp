@@ -91,15 +91,22 @@ void AircraftAHRS::reset() {
     memset(adaptiveGyroBias_, 0, sizeof(adaptiveGyroBias_));
     memset(adaptiveGyroBiasInformation_, 0, sizeof(adaptiveGyroBiasInformation_));
     adaptiveGyroBiasRejectedInnovations_ = 0;
+    gyroCadenceMeanDtSec_ = 0.0f;
+    gyroCadenceAccumulatedDtSec_ = 0.0f;
+    gyroCadenceSampleCount_ = 0;
+    gyroCadenceQualified_ = false;
 }
 
 void AircraftAHRS::updateAdaptiveGyroBias(float dt) {
     float transform[3][3];
     const float gain[3] = {config_.gyroGainX, config_.gyroGainY,
                            config_.gyroGainZ};
+    const float axisSign[3] = {config_.gyroAxisSignX, config_.gyroAxisSignY,
+                               config_.gyroAxisSignZ};
     for (int row = 0; row < 3; ++row)
         for (int axis = 0; axis < 3; ++axis)
-            transform[row][axis] = gain[row] * sensorFrameRotation_[row][axis];
+            transform[row][axis] = gain[row] * sensorFrameRotation_[row][axis] *
+                                   axisSign[axis];
 
     const float phi = state_.rollDeg * DEG_TO_RAD_F;
     const float theta = state_.pitchDeg * DEG_TO_RAD_F;
@@ -137,15 +144,22 @@ void AircraftAHRS::updateAdaptiveGyroBias(float dt) {
     float information[3]{};
     for (int measurement = 0; measurement < 3; ++measurement) {
         if (!valid[measurement]) continue;
-        if (!isfinite(innovation[measurement]) ||
-            fabsf(innovation[measurement]) >
-                config_.adaptiveGyroBiasInnovationLimitDeg) {
+        if (!isfinite(innovation[measurement])) {
             ++adaptiveGyroBiasRejectedInnovations_;
             continue;
         }
+        float boundedInnovation = innovation[measurement];
+        const float innovationLimit =
+            config_.adaptiveGyroBiasInnovationLimitDeg;
+        if (innovationLimit > 0.0f &&
+            fabsf(boundedInnovation) > innovationLimit) {
+            ++adaptiveGyroBiasRejectedInnovations_;
+            boundedInnovation = copysignf(innovationLimit,
+                                          boundedInnovation);
+        }
         for (int axis = 0; axis < 3; ++axis) {
             numerator[axis] += sensitivity[measurement][axis] *
-                               innovation[measurement];
+                               boundedInnovation;
             information[axis] += sensitivity[measurement][axis] *
                                  sensitivity[measurement][axis];
         }
@@ -473,6 +487,28 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
     float dt = (uint32_t)(nowUs - lastImuUs_) * 1.0e-6f;
     state_.lastImuDtSec = dt;
     lastImuUs_ = nowUs;
+    if (config_.adaptiveGyroIntegrationDtEnabled && dt > 0.0f &&
+        dt <= config_.gyroCadenceMaximumObservedGapSec) {
+        const float boundedDt = fmaxf(config_.gyroCadenceMinimumDtSec,
+            fminf(config_.gyroCadenceMaximumDtSec, dt));
+        if (!gyroCadenceQualified_) {
+            gyroCadenceAccumulatedDtSec_ += boundedDt;
+            ++gyroCadenceSampleCount_;
+            gyroCadenceMeanDtSec_ = gyroCadenceAccumulatedDtSec_ /
+                                    gyroCadenceSampleCount_;
+            if (gyroCadenceAccumulatedDtSec_ >=
+                config_.gyroCadenceQualificationSec) {
+                gyroCadenceQualified_ = true;
+            }
+        } else {
+            const float alpha = correctionFraction(
+                boundedDt, config_.gyroCadenceFilterTimeSec);
+            gyroCadenceMeanDtSec_ += alpha *
+                (boundedDt - gyroCadenceMeanDtSec_);
+        }
+    }
+    state_.observedMeanImuDtSec = gyroCadenceMeanDtSec_;
+    state_.gyroCadenceQualified = gyroCadenceQualified_;
     if (dt <= 0 || dt > 0.1f) return;
 
     const float gyroLimit = config_.gyroRateLimitDegSec;
@@ -508,6 +544,9 @@ void AircraftAHRS::updateImu(float pDegSec, float qDegSec, float rDegSec,
     state_.lastPitchYawCouplingDegSec = -rDegSec * sinf(phi);
     float integrationDt = config_.gyroIntegrationDtSec > 0.0f
         ? config_.gyroIntegrationDtSec : dt;
+    if (config_.adaptiveGyroIntegrationDtEnabled && gyroCadenceQualified_)
+        integrationDt = gyroCadenceMeanDtSec_;
+    state_.effectiveGyroIntegrationDtSec = integrationDt;
     state_.lastPitchGyroDeltaDeg = thetaDotDegSec * integrationDt;
     state_.pitchDeg = wrap180(state_.pitchDeg + state_.lastPitchGyroDeltaDeg);
     state_.rollDeg = wrap180(state_.rollDeg + phiDotDegSec * integrationDt);
