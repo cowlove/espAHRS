@@ -117,7 +117,7 @@ public:
             float headingOffsetDeg = 0.0f;
             float declinationDeg = 0.0f;
             float correctionTimeSec = 8.0f;
-            float weight = 1.0f;
+            float weight = 0.0f;
             float timeoutSec = 1.0f;
         } compass[2];
     };

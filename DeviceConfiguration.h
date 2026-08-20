@@ -44,10 +44,10 @@ constexpr DeviceImuCalibration identityImuCalibration() {
 // Physical GEEK unit 28:37:2F:F8:24:7C. Numeric values are intentionally
 // source-controlled so firmware, replay, simulation, and sweeps share them.
 constexpr DeviceConfiguration DEVICE_CONFIGURATIONS[] = {{
-  {0x28, 0x37, 0x2F, 0xF8, 0x24, 0x7C}, "geek-247c", "geek-247c-r2",
+  {0x28, 0x37, 0x2F, 0xF8, 0x24, 0x7C}, "geek-247c", "geek-247c-r3",
   HalBoardKind::GeekS3,
   {{
-    {1.04055f, -0.67885f, 0.0f, {-0.45114f,0.01748f,0.16f}, {1,-1,-1},
+    {1.04055f, -0.67885f, 0.0f, {-0.45114f,0.01748f,0.10932f}, {1,-1,-1},
      {-0.002f,-0.019f,0.222f}, false,
      {{1,0,0},{0,1,0},{0,0,1}}, {{1,0,0},{0,1,0},{0,0,1}}},
     {0.0f, 0.0f, 0.0f, {0,0,0}, {1,1,1}, {0,0,0}, false,
@@ -61,10 +61,10 @@ constexpr DeviceConfiguration DEVICE_CONFIGURATIONS[] = {{
      {{0.00200813f,-0.00000361f,-0.00005624f},{0.00000361f,-0.00209991f,0.00003358f},{0.00005624f,0.00003358f,-0.00219467f}},
      {{0.84730183f,-0.04935318f,-0.52881365f},{0.05163944f,0.99861103f,-0.01045820f},{0.52859529f,-0.01844639f,0.84867352f}}}
   }}}, {
-  {0x90, 0x70, 0x69, 0x85, 0xD5, 0xBC}, "geek-d5bc", "geek-d5bc-r3",
+  {0x90, 0x70, 0x69, 0x85, 0xD5, 0xBC}, "geek-d5bc", "geek-d5bc-r4",
   HalBoardKind::GeekS3,
   {{
-    {2.07970f, 7.53569f, 0.0f, {-0.23702f,0.21373f,0.16f}, {1,-1,-1},
+    {2.07970f, 7.53569f, 0.0f, {-0.23702f,0.21373f,-0.00810f}, {1,-1,-1},
      {0,0,0}, false,
      {{0,1,0},{-1,0,0},{0,0,1}}, {{0,-1,0},{1,0,0},{0,0,1}}},
     identityImuCalibration(), identityImuCalibration(), identityImuCalibration()

@@ -214,7 +214,8 @@ int main(int argc, char **argv) {
             rollCsv = std::fopen(argv[++i], "w");
             if (!rollCsv) { std::perror("--roll-csv"); return 1; }
             std::fprintf(rollCsv,
-                         "time_s,g5_roll,ahrs_roll,gps_turn_rate_bank_deg,g5_slip_raw,"
+                         "time_s,g5_roll,ahrs_roll,gps_turn_rate_bank_deg,"
+                         "gps_turn_rate_bank_valid,g5_slip_raw,"
                          "mag_turn_rate_bank_deg,yaw_gyro_turn_rate_bank_deg,"
                          "fused_turn_rate_bank_deg,accel_roll_deg,roll_correction_target_deg,"
                          "magnetic_roll_deg,magnetic_roll_innovation_deg,"
@@ -367,10 +368,11 @@ int main(int argc, char **argv) {
             if (rollCsv || pitchCsv) {
                 const auto &s = ahrs.state(nowMs);
                 if (rollCsv) {
-                    std::fprintf(rollCsv, "%.6f,nan,%.6f,%.6f,nan,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,nan\n",
+                    std::fprintf(rollCsv, "%.6f,nan,%.6f,%.6f,%d,nan,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,nan\n",
                                  h.timestampUs * 1.0e-6,
                                  s.rollDeg,
                                  s.gpsTurnRateBankDeg,
+                                 s.gpsTurnRateBankValid ? 1 : 0,
                                  s.magTurnRateBankDeg,
                                  s.yawGyroTurnRateBankDeg,
                                  s.fusedTurnRateBankDeg,
@@ -503,10 +505,11 @@ int main(int argc, char **argv) {
                                                                g5Heading + replayConfig.g5HeadingOffsetDeg) : 0.0f};
                     timedErrors.push_back(timed);
                     if (rollCsv) {
-                        std::fprintf(rollCsv, "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%.6f\n",
+                        std::fprintf(rollCsv, "%.6f,%.6f,%.6f,%.6f,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%.6f\n",
                                      h.timestampUs * 1.0e-6,
                                      g5Roll, state.rollDeg,
                                      state.gpsTurnRateBankDeg,
+                                     state.gpsTurnRateBankValid ? 1 : 0,
                                      g5Slip,
                                      state.magTurnRateBankDeg,
                                      state.yawGyroTurnRateBankDeg,
