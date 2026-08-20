@@ -5,6 +5,10 @@ For the replay/AHRS parameter reference and tuning workflow, see
 [TUNING.md](TUNING.md).
 For the proposed standalone DipAHRS package scope and algorithm design, see
 [DipAHRS.md](DipAHRS.md).
+That document also defines the architectural boundary: production compass yaw
+in `AircraftAHRS` is conventionally tilt-compensated and does not consume a
+DipAHRS heading result; DipAHRS contributes only its optional magnetic-roll
+observation to the roll correction target.
 For the literature and public-code background of the magnetic-vector roll
 observer, see [MAGNETIC_ROLL_PRIOR_ART.md](MAGNETIC_ROLL_PRIOR_ART.md).
 

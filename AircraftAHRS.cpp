@@ -1,4 +1,5 @@
 #include "AircraftAHRS.h"
+#include "DipAHRS.h"
 
 #include <math.h>
 #include <string.h>
@@ -38,6 +39,27 @@ void AircraftAHRS::bodyRatesToEulerRates(
         (qDegSec * sinf(phi) + rDegSec * cosf(phi)) / cosTheta;
 }
 
+bool AircraftAHRS::tiltCompensatedMagneticHeading(
+        float bodyX, float bodyY, float bodyZ, float rollDeg, float pitchDeg,
+        float declinationDeg, float &headingDeg) {
+    const float roll = rollDeg * DEG_TO_RAD_F;
+    const float pitch = pitchDeg * DEG_TO_RAD_F;
+
+    // Undo body roll, then pitch, leaving the magnetic vector in a level
+    // heading-aligned frame. Aircraft axes are X-forward, Y-right, Z-down.
+    const float levelY = cosf(roll) * bodyY - sinf(roll) * bodyZ;
+    const float afterRollZ = sinf(roll) * bodyY + cosf(roll) * bodyZ;
+    const float levelX = cosf(pitch) * bodyX + sinf(pitch) * afterRollZ;
+    const float horizontalMagnitude = sqrtf(levelX * levelX +
+                                            levelY * levelY);
+    if (!isfinite(horizontalMagnitude) || horizontalMagnitude < 1.0e-6f)
+        return false;
+
+    headingDeg = wrap360(declinationDeg +
+        atan2f(-levelY, levelX) * RAD_TO_DEG_F);
+    return isfinite(headingDeg);
+}
+
 void AircraftAHRS::setCompassCalibration(uint8_t source, const float offset[3],
                                           const float matrix[3][3]) {
     if (source >= 2) return;
@@ -66,6 +88,7 @@ void AircraftAHRS::reset() {
     lastHeadingAidingMs_ = 0;
     lastFusedHeadingMs_ = 0;
     compassHave_[0] = compassHave_[1] = false;
+    compassRollHave_[0] = compassRollHave_[1] = false;
     compassRoll_[0] = compassRoll_[1] = 0.0f;
     compassMagnitude_[0] = compassMagnitude_[1] = 0.0f;
     compassRollGeometry_[0] = compassRollGeometry_[1] = 0.0f;
@@ -127,7 +150,8 @@ void AircraftAHRS::updateAdaptiveGyroBias(float dt) {
 
     const bool valid[3] = {
         state_.accelerometerAidingValid || state_.gpsTurnRateBankValid ||
-            state_.magneticRollAidingValid,
+            (state_.magneticRollAidingValid &&
+             config_.dipAhrsRollWeight > 0.0f),
         state_.pitchGravityAidingValid,
         state_.headingAidingValid
     };
@@ -222,6 +246,7 @@ void AircraftAHRS::updateCompass(uint8_t source, float x, float y, float z,
     auto &cfg = config_.compass[source];
     if (!valid) {
         compassHave_[source] = false;
+        compassRollHave_[source] = false;
         state_.compassValid[source] = false;
         applyHeadingAiding(nowMs, true);
         return;
@@ -237,29 +262,44 @@ void AircraftAHRS::updateCompass(uint8_t source, float x, float y, float z,
     float frameZ = cfg.frameRotation[2][0] * x + cfg.frameRotation[2][1] * y + cfg.frameRotation[2][2] * z;
     x = frameX; y = frameY; z = frameZ;
     compassMagnitude_[source] = sqrtf(x * x + y * y + z * z);
-    if (fabsf(compassMagnitude_[source] - 1.0f) >
-        config_.magneticFieldMagnitudeTolerance) {
+    if (config_.magneticFieldMagnitudeTolerance >= 0.0f &&
+        fabsf(compassMagnitude_[source] - 1.0f) >
+            config_.magneticFieldMagnitudeTolerance) {
         compassHave_[source] = false;
+        compassRollHave_[source] = false;
         state_.compassValid[source] = false;
         applyHeadingAiding(nowMs, true);
         return;
     }
+    float headingDeg = 0.0f;
+    if (!tiltCompensatedMagneticHeading(
+            x, y, z, state_.rollDeg, state_.pitchDeg,
+            config_.magneticDeclinationDeg + cfg.declinationDeg,
+            headingDeg)) {
+        compassHave_[source] = false;
+        compassRollHave_[source] = false;
+        state_.compassValid[source] = false;
+        applyHeadingAiding(nowMs, true);
+        return;
+    }
+
+    // DipAHRS is an independent experimental magnetic-roll observer. Its
+    // success or failure must not determine production compass-heading
+    // validity, and its heading output is intentionally ignored here.
+    compassRollHave_[source] = false;
     DipAHRS::Config dipConfig;
     dipConfig.magneticDeclinationDeg = config_.magneticDeclinationDeg;
     dipConfig.magneticInclinationDeg = config_.magneticInclinationDeg;
     dipConfig.minimumRollGeometry = config_.magneticRollMinimumGeometry;
     DipAHRS::Observation dipObservation;
-    if (!DipAHRS::observe(x, y, z, state_.pitchDeg, state_.rollDeg,
-                          state_.headingDeg, dipConfig, dipObservation)) {
-        compassHave_[source] = false;
-        state_.compassValid[source] = false;
-        applyHeadingAiding(nowMs, true);
-        return;
+    if (DipAHRS::observe(x, y, z, state_.pitchDeg, state_.rollDeg,
+                         state_.headingDeg, dipConfig, dipObservation)) {
+        compassRoll_[source] = dipObservation.rollDeg;
+        compassRollGeometry_[source] = dipObservation.rollGeometry;
+        compassRollHave_[source] = true;
     }
-    compassRoll_[source] = dipObservation.rollDeg;
-    compassRollGeometry_[source] = dipObservation.rollGeometry;
     compassHeading_[source] =
-        wrap360(dipObservation.headingDeg + cfg.headingOffsetDeg);
+        wrap360(headingDeg + cfg.headingOffsetDeg);
     compassHave_[source] = true;
     lastCompassMs_[source] = nowMs;
     state_.compassHeadingDeg[source] = compassHeading_[source];
@@ -278,17 +318,21 @@ void AircraftAHRS::applyHeadingAiding(uint32_t nowMs,
         bool fresh = compassHave_[i] && lastCompassMs_[i] &&
             (uint32_t)(nowMs - lastCompassMs_[i]) <= cfg.timeoutSec * 1000.0f;
         state_.compassValid[i] = fresh;
-        if (!fresh || cfg.weight <= 0.0f) continue;
-        float r = compassHeading_[i] * DEG_TO_RAD_F;
-        sumX += cfg.weight * cosf(r);
-        sumY += cfg.weight * sinf(r);
-        totalWeight += cfg.weight;
-        const float rollRadians = compassRoll_[i] * DEG_TO_RAD_F;
-        const float rollWeight = cfg.weight * compassRollGeometry_[i];
-        rollSumX += rollWeight * cosf(rollRadians);
-        rollSumY += rollWeight * sinf(rollRadians);
-        rollTotalWeight += rollWeight;
-        sourceRoll[rollSourceCount++] = compassRoll_[i];
+        if (fresh && cfg.weight > 0.0f) {
+            float r = compassHeading_[i] * DEG_TO_RAD_F;
+            sumX += cfg.weight * cosf(r);
+            sumY += cfg.weight * sinf(r);
+            totalWeight += cfg.weight;
+        }
+        if (fresh && compassRollHave_[i] && cfg.dipAhrsWeight > 0.0f) {
+            const float rollRadians = compassRoll_[i] * DEG_TO_RAD_F;
+            const float rollWeight = cfg.dipAhrsWeight *
+                                     compassRollGeometry_[i];
+            rollSumX += rollWeight * cosf(rollRadians);
+            rollSumY += rollWeight * sinf(rollRadians);
+            rollTotalWeight += rollWeight;
+            sourceRoll[rollSourceCount++] = compassRoll_[i];
+        }
     }
     bool compassAvailable = totalWeight > 0.0f;
     float magneticHeading = compassAvailable ?

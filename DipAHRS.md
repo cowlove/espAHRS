@@ -51,6 +51,27 @@ instantaneous attitude replacement. The gyro remains the short-period source,
 while magnetic bank supplies a weak, gated, long-period roll-drift correction.
 The current implementation of only this geometry is in [DipAHRS.h](DipAHRS.h).
 
+## Boundary with espAHRS
+
+DipAHRS is an experimental, standalone estimator concept, not the production
+magnetic-heading implementation inside espAHRS. The integration boundary is
+deliberately narrow:
+
+- `AircraftAHRS` owns magnetometer calibration, aircraft-frame mapping,
+  conventional roll/pitch tilt compensation, horizontal heading calculation,
+  dual-compass fusion, GPS fusion, and magnetic turn-rate derivation.
+- `DipAHRS::observe()` may supply only its full-vector magnetic-roll
+  observation and geometry score to the optional DipAHRS roll input of the
+  roll gyro correction target.
+- `AircraftAHRS` must not consume the heading candidate returned by DipAHRS,
+  and DipAHRS validity must not gate production magnetic-heading validity.
+- Compass yaw weights and DipAHRS roll-source weights are independent. This
+  preserves the experiment even while production compass yaw is disabled.
+
+This separation is intentional so DipAHRS can later move into its own project
+and paper without making espAHRS yaw behavior depend on the experimental
+two-branch magnetic-dip solver.
+
 ## Why this decomposition is interesting
 
 Magnetometer-aided attitude estimation is established prior art, including

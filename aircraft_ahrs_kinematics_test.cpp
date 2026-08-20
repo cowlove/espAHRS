@@ -69,6 +69,44 @@ float determinant(const float m[3][3]) {
            m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
            m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
 }
+
+void synthesizeBodyField(float declinationDeg, float inclinationDeg,
+                         float rollDeg, float pitchDeg, float headingDeg,
+                         float &x, float &y, float &z) {
+    const float declination = declinationDeg * kDegToRad;
+    const float inclination = inclinationDeg * kDegToRad;
+    const float roll = rollDeg * kDegToRad;
+    const float pitch = pitchDeg * kDegToRad;
+    const float heading = headingDeg * kDegToRad;
+    const float horizontal = cosf(inclination);
+    const float down = sinf(inclination);
+    const float alongHeading = horizontal * cosf(heading - declination);
+    const float acrossHeading = horizontal * sinf(declination - heading);
+    const float pitchedZ = sinf(pitch) * alongHeading + cosf(pitch) * down;
+    x = cosf(pitch) * alongHeading - sinf(pitch) * down;
+    y = cosf(roll) * acrossHeading + sinf(roll) * pitchedZ;
+    z = -sinf(roll) * acrossHeading + cosf(roll) * pitchedZ;
+}
+
+float headingError(float actual, float expected) {
+    float error = actual - expected;
+    while (error > 180.0f) error -= 360.0f;
+    while (error <= -180.0f) error += 360.0f;
+    return fabsf(error);
+}
+
+void checkTiltCompensatedHeading(float rollDeg, float pitchDeg,
+                                 float headingDeg) {
+    constexpr float declinationDeg = 14.89224f;
+    constexpr float inclinationDeg = 68.75569f;
+    float x, y, z;
+    synthesizeBodyField(declinationDeg, inclinationDeg, rollDeg, pitchDeg,
+                        headingDeg, x, y, z);
+    float observed = 0.0f;
+    assert(AircraftAHRS::tiltCompensatedMagneticHeading(
+        x, y, z, rollDeg, pitchDeg, declinationDeg, observed));
+    assert(headingError(observed, headingDeg) < 0.001f);
+}
 }
 
 int main() {
@@ -85,10 +123,57 @@ int main() {
     assert(resolveDeviceConfiguration("24:7c", resolved) == DeviceConfigurationLookup::Found);
     assert(resolveDeviceConfiguration("7C", resolved) == DeviceConfigurationLookup::Invalid);
     assert(resolveDeviceConfiguration("ZZZZ", resolved) == DeviceConfigurationLookup::Invalid);
+
+    // Soft-iron matrices describe shape only: they must be symmetric positive
+    // definite.  Axis polarity/permutation belongs in frameRotation.  The two
+    // identically mounted GNSS compasses consequently share one frame map.
+    for (const auto &device : DEVICE_CONFIGURATIONS) {
+        for (const auto &compass : device.calibration.compass) {
+            const auto &m = compass.matrix;
+            assert(fabsf(m[0][1] - m[1][0]) < 1e-8f);
+            assert(fabsf(m[0][2] - m[2][0]) < 1e-8f);
+            assert(fabsf(m[1][2] - m[2][1]) < 1e-8f);
+            assert(m[0][0] > 0.0f);
+            assert(m[0][0] * m[1][1] - m[0][1] * m[1][0] > 0.0f);
+            const float determinant =
+                m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) -
+                m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0]) +
+                m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+            assert(determinant > 0.0f);
+        }
+    }
+    assert(memcmp(DEVICE_CONFIGURATIONS[0].calibration.compass[1].frameRotation,
+                  DEVICE_CONFIGURATIONS[1].calibration.compass[1].frameRotation,
+                  sizeof(DEVICE_CONFIGURATIONS[0].calibration.compass[1].frameRotation)) == 0);
     checkAgainstIndependentMatrix(0, 0, 10, 0, 0);
     checkAgainstIndependentMatrix(30, 0, 0, 0, 10);
     checkAgainstIndependentMatrix(-42, 17, 12, -23, 19);
     checkAgainstIndependentMatrix(65, -28, -31, 17, -13);
+
+    // Production magnetic heading uses conventional roll/pitch tilt
+    // compensation and must not depend on DipAHRS's two-branch solver.
+    checkTiltCompensatedHeading(0.0f, 0.0f, 0.0f);
+    checkTiltCompensatedHeading(25.0f, 8.0f, 42.0f);
+    checkTiltCompensatedHeading(-32.0f, -6.0f, 315.0f);
+    float undefinedHeading = 0.0f;
+    assert(!AircraftAHRS::tiltCompensatedMagneticHeading(
+        0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, undefinedHeading));
+
+    // A rejected DipAHRS roll observation must not invalidate conventional
+    // production compass heading.
+    AircraftAHRS::Config separatedCompassConfig;
+    separatedCompassConfig.compass[0].weight = 1.0f;
+    separatedCompassConfig.magneticRollMinimumGeometry = 2.0f;
+    AircraftAHRS separatedCompass(separatedCompassConfig);
+    float fieldX, fieldY, fieldZ;
+    synthesizeBodyField(separatedCompassConfig.magneticDeclinationDeg,
+                        separatedCompassConfig.magneticInclinationDeg,
+                        0.0f, 0.0f, 75.0f, fieldX, fieldY, fieldZ);
+    separatedCompass.updateCompass(0, fieldX, fieldY, fieldZ, true, 1);
+    const auto &separatedState = separatedCompass.state(1);
+    assert(separatedState.compassValid[0]);
+    assert(headingError(separatedState.compassHeadingDeg[0], 75.0f) < 0.001f);
+    assert(!separatedState.magneticRollAidingValid);
 
     // Body-rate remapping must remain a proper right-handed rotation.  A
     // single-axis convention flip turns this into a reflection and breaks

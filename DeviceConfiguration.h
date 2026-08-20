@@ -44,7 +44,7 @@ constexpr DeviceImuCalibration identityImuCalibration() {
 // Physical GEEK unit 28:37:2F:F8:24:7C. Numeric values are intentionally
 // source-controlled so firmware, replay, simulation, and sweeps share them.
 constexpr DeviceConfiguration DEVICE_CONFIGURATIONS[] = {{
-  {0x28, 0x37, 0x2F, 0xF8, 0x24, 0x7C}, "geek-247c", "geek-247c-r3",
+  {0x28, 0x37, 0x2F, 0xF8, 0x24, 0x7C}, "geek-247c", "geek-247c-r5",
   HalBoardKind::GeekS3,
   {{
     {1.04055f, -0.67885f, 0.0f, {-0.45114f,0.01748f,0.10932f}, {1,-1,-1},
@@ -56,12 +56,17 @@ constexpr DeviceConfiguration DEVICE_CONFIGURATIONS[] = {{
   }, {
     {{-37.4412f,-2.7410f,-9.2134f},
      {{0.02139609f,0.00013715f,0.00008128f},{0.00013715f,0.02186670f,-0.00068774f},{0.00008128f,-0.00068774f,0.02277121f}},
-     {{0.77213273f,-0.09675043f,-0.62805286f},{0.13093247f,0.99135694f,0.00825255f},{0.62182614f,-0.08860457f,0.77812691f}}},
+     // Retain the 21:22 diagnostic replay mapping: Compass 0 horizontal
+     // axes aligned; calibrated aircraft-frame Z polarity inverted.
+     {{1,0,0},{0,1,0},{0,0,-1}}},
     {{149.5027f,88.4811f,-73.3429f},
-     {{0.00200813f,-0.00000361f,-0.00005624f},{0.00000361f,-0.00209991f,0.00003358f},{0.00005624f,0.00003358f,-0.00219467f}},
-     {{0.84730183f,-0.04935318f,-0.52881365f},{0.05163944f,0.99861103f,-0.01045820f},{0.52859529f,-0.01844639f,0.84867352f}}}
+     // Soft-iron calibration is deliberately symmetric positive-definite;
+     // sensor orientation belongs exclusively in frameRotation below.
+     {{0.00200813f,-0.00000361f,-0.00005624f},{-0.00000361f,0.00209991f,-0.00003358f},{-0.00005624f,-0.00003358f,0.00219467f}},
+     // Retain the 21:22 diagnostic replay mapping shared by both GNSS units.
+     {{1,0,0},{0,-1,0},{0,0,-1}}}
   }}}, {
-  {0x90, 0x70, 0x69, 0x85, 0xD5, 0xBC}, "geek-d5bc", "geek-d5bc-r4",
+  {0x90, 0x70, 0x69, 0x85, 0xD5, 0xBC}, "geek-d5bc", "geek-d5bc-r5",
   HalBoardKind::GeekS3,
   {{
     {2.07970f, 7.53569f, 0.0f, {-0.23702f,0.21373f,-0.00810f}, {1,-1,-1},
@@ -70,11 +75,14 @@ constexpr DeviceConfiguration DEVICE_CONFIGURATIONS[] = {{
     identityImuCalibration(), identityImuCalibration(), identityImuCalibration()
   }, {
     {{-16.3147f,-14.5599f,1.0301f},
-     {{0.0212943f,-0.0002670f,-0.0000595f},{-0.0002757f,0.0209339f,-0.0000424f},{-0.0000627f,-0.0000433f,0.0207962f}},
-     {{1,0,0},{0,1,0},{0,0,1}}},
+     {{0.0212943f,-0.00027135f,-0.0000611f},{-0.00027135f,0.0209339f,-0.00004285f},{-0.0000611f,-0.00004285f,0.0207962f}},
+     // GD5BC012 bench sequence: compass-0 sensor X/Y are exchanged and
+     // the calibrated aircraft-frame polarity is X+, Y-, Z-.
+     {{0,1,0},{-1,0,0},{0,0,-1}}},
     {{-11.3685f,119.5854f,-39.9449f},
-     {{0.00196225f,0.0000382f,-0.0000831f},{0.0000358f,0.00205668f,0.0000266f},{-0.0000825f,0.0000282f,0.00199705f}},
-     {{1,0,0},{0,1,0},{0,0,1}}}
+     {{0.00196225f,0.0000370f,-0.0000828f},{0.0000370f,0.00205668f,0.0000274f},{-0.0000828f,0.0000274f,0.00199705f}},
+     // Shared SEQURE GNSS compass mapping; see the 247C profile above.
+     {{1,0,0},{0,-1,0},{0,0,-1}}}
   }}
 }};
 

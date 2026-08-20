@@ -109,7 +109,7 @@ static bool readLogMetadata(const char *path, FusionLogMetadataRecord &metadata)
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s session.bin [--device-mac MAC_OR_UNIQUE_SUFFIX] [--hal geek|tbeam] [--axis-remap 9 values] [--gyro-axis-remap 9 values] [--param name=value] [--roll-csv FILE] [--pitch-csv FILE] [--imu-csv FILE] [--ignore-g5] [--list-params]\n", argv[0]);
+        std::fprintf(stderr, "usage: %s session.bin [--device-mac MAC_OR_UNIQUE_SUFFIX] [--hal geek|tbeam] [--axis-remap 9 values] [--gyro-axis-remap 9 values] [--compass-frame-remap 9 values] [--param name=value] [--roll-csv FILE] [--pitch-csv FILE] [--imu-csv FILE] [--heading-csv FILE] [--ignore-g5] [--list-params]\n", argv[0]);
         return 2;
     }
     {
@@ -181,9 +181,12 @@ int main(int argc, char **argv) {
     float axisRemap[3][3]{};
     bool gyroAxisRemapOverride = false;
     float gyroAxisRemap[3][3]{};
+    bool compassFrameRemapOverride = false;
+    float compassFrameRemap[3][3]{};
     std::FILE *rollCsv = nullptr;
     std::FILE *pitchCsv = nullptr;
     std::FILE *imuCsv = nullptr;
+    std::FILE *headingCsv = nullptr;
     bool ignoreG5 = false;
     for (int i = 2; i < argc; ++i) {
         if (std::strcmp(argv[i], "--list-params") == 0) { ReplayConfig::list(); return 0; }
@@ -208,6 +211,13 @@ int main(int argc, char **argv) {
                 for (int column = 0; column < 3; ++column)
                     gyroAxisRemap[row][column] = std::strtof(argv[++i], nullptr);
             gyroAxisRemapOverride = true;
+            continue;
+        }
+        if (std::strcmp(argv[i], "--compass-frame-remap") == 0 && i + 9 < argc) {
+            for (int row = 0; row < 3; ++row)
+                for (int column = 0; column < 3; ++column)
+                    compassFrameRemap[row][column] = std::strtof(argv[++i], nullptr);
+            compassFrameRemapOverride = true;
             continue;
         }
         if (std::strcmp(argv[i], "--roll-csv") == 0 && i + 1 < argc) {
@@ -239,6 +249,14 @@ int main(int argc, char **argv) {
                 std::fprintf(imuCsv, "time_s,dt_s,raw_gyro_x_deg_sec,raw_gyro_y_deg_sec,raw_gyro_z_deg_sec,body_pitch_rate_deg_sec,yaw_rate_deg_sec,pitch_q_contribution_deg_sec,pitch_yaw_coupling_deg_sec,gyro_pitch_delta_deg,accel_pitch_correction_delta_deg,gps_pitch_correction_delta_deg,ahrs_roll,ahrs_pitch,gyro_sample_accepted,adaptive_bias_qualified,adaptive_bias_qualifying_sec,adaptive_bias_x_deg_sec,adaptive_bias_y_deg_sec,adaptive_bias_z_deg_sec,adaptive_candidate_x_deg_sec,adaptive_candidate_y_deg_sec,adaptive_candidate_z_deg_sec,adaptive_stddev_x_deg_sec,adaptive_stddev_y_deg_sec,adaptive_stddev_z_deg_sec,adaptive_information_x_sec,adaptive_information_y_sec,adaptive_information_z_sec,adaptive_confidence_x,adaptive_confidence_y,adaptive_confidence_z,adaptive_roll_innovation_deg,adaptive_pitch_innovation_deg,adaptive_heading_innovation_deg,adaptive_rejected_innovations,observed_mean_dt_s,effective_integration_dt_s,gyro_cadence_qualified\n");
             continue;
         }
+        if (std::strcmp(argv[i], "--heading-csv") == 0 && i + 1 < argc) {
+            headingCsv = std::fopen(argv[++i], "w");
+            if (!headingCsv) { std::perror("--heading-csv"); return 1; }
+            std::fprintf(headingCsv,
+                         "time_s,gps_track_deg,gps_valid,compass_heading_deg,"
+                         "compass_valid,ahrs_roll_deg,ahrs_pitch_deg\n");
+            continue;
+        }
         if (std::strcmp(argv[i], "--param") == 0 && i + 1 < argc) ++i;
         else if (std::strncmp(argv[i], "--param=", 8) == 0) argv[i] += 8;
         else { std::fprintf(stderr, "unknown option: %s\n", argv[i]); return 2; }
@@ -257,6 +275,9 @@ int main(int argc, char **argv) {
     if (gyroAxisRemapOverride)
         std::memcpy(selectedDevice.calibration.imu[replayConfig.selectedImuSource].gyroAxisRemap,
                     gyroAxisRemap, sizeof(gyroAxisRemap));
+    if (compassFrameRemapOverride)
+        std::memcpy(selectedDevice.calibration.compass[replayConfig.selectedCompassSource].frameRotation,
+                    compassFrameRemap, sizeof(compassFrameRemap));
     ahrs.setCompassCalibration(0, selectedDevice.calibration.compass[0].offset,
                                selectedDevice.calibration.compass[0].matrix);
     ahrs.setCompassCalibration(1, selectedDevice.calibration.compass[1].offset,
@@ -448,7 +469,7 @@ int main(int argc, char **argv) {
             if (fusionLogSource(static_cast<FusionLogType>(h.type)) != replayConfig.selectedCompassSource) break;
             if (h.payloadLength != sizeof(FusionCompassRecord)) return 1;
             FusionCompassRecord r; std::memcpy(&r, payload, sizeof(r));
-            ahrs.updateCompass(0,
+            ahrs.updateCompass(replayConfig.selectedCompassSource,
                                r.x, r.y, r.z, r.valid != 0, nowMs);
             break;
         }
@@ -547,11 +568,34 @@ int main(int argc, char **argv) {
         }
         if (h.type != FUSION_LOG_G5_PACKET && h.type != FUSION_LOG_G5_RAW_ESPNOW)
             stateHistory.push_back({h.timestampUs, ahrs.state(nowMs)});
+        if (headingCsv && (h.type == FUSION_LOG_GPS ||
+                           (fusionLogIsCompass(static_cast<FusionLogType>(h.type)) &&
+                            fusionLogSource(static_cast<FusionLogType>(h.type)) ==
+                                replayConfig.selectedCompassSource))) {
+            const auto &headingState = ahrs.state(nowMs);
+            const bool isSelectedCompassRecord =
+                fusionLogIsCompass(static_cast<FusionLogType>(h.type)) &&
+                fusionLogSource(static_cast<FusionLogType>(h.type)) ==
+                    replayConfig.selectedCompassSource;
+            std::fprintf(headingCsv, "%.6f,%.6f,%d,%.6f,%d,%.6f,%.6f\n",
+                         h.timestampUs * 1.0e-6,
+                         headingState.gpsTrackDeg,
+                         headingState.gpsValid ? 1 : 0,
+                         replayConfig.selectedCompassSource < 2 ?
+                             headingState.compassHeadingDeg[
+                                 replayConfig.selectedCompassSource] : 0.0f,
+                         isSelectedCompassRecord &&
+                         replayConfig.selectedCompassSource < 2 &&
+                             headingState.compassValid[
+                                 replayConfig.selectedCompassSource] ? 1 : 0,
+                         headingState.rollDeg, headingState.pitchDeg);
+        }
     }
     const auto &s = ahrs.state(lastMs);
     if (rollCsv) std::fclose(rollCsv);
     if (pitchCsv) std::fclose(pitchCsv);
     if (imuCsv) std::fclose(imuCsv);
+    if (headingCsv) std::fclose(headingCsv);
     std::printf("REPLAY records=%llu bytes=%llu imu=%u compass0=%u compass1=%u baro=%u g5raw=%u g5=%u\n",
                 static_cast<unsigned long long>(records),
                 static_cast<unsigned long long>(bytes), counts[FUSION_LOG_IMU],

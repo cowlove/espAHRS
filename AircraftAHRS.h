@@ -2,13 +2,12 @@
 
 #include <stdint.h>
 
-#include "DipAHRS.h"
-
 // Deliberately narrow GPS-aided AHRS for coordinated, low-wind airplane flight.
 // Gyros provide short-term attitude. Independent GPS-track, magnetic-heading,
 // and yaw-gyro turn rates provide coordinated-turn bank observations.
-// Accelerometers add a gated lateral-specific-force residual, and DipAHRS
-// supplies a separate absolute roll observation.
+// Accelerometers add a gated lateral-specific-force residual. Conventional
+// tilt-compensated magnetic heading belongs to AircraftAHRS; DipAHRS is used
+// only as an optional, separate magnetic-roll observation.
 class AircraftAHRS {
 public:
     struct Config {
@@ -96,7 +95,10 @@ public:
         // Declination is east-positive; inclination is down-positive in NED.
         float magneticDeclinationDeg = 14.89224f;
         float magneticInclinationDeg = 68.75569f;
-        float magneticFieldMagnitudeTolerance = 0.20f;
+        // Negative disables the calibrated-field magnitude rejection gate.
+        // Compass diagnostics currently retain every finite sample so that
+        // installed magnetic distortion can be inspected directly.
+        float magneticFieldMagnitudeTolerance = -1.0f;
         float magneticRollMaximumDisagreementDeg = 15.0f;
         float magneticRollMinimumGeometry = 0.25f;
         float baroAltitudeFilterTimeSec = 0.5f;
@@ -117,7 +119,12 @@ public:
             float headingOffsetDeg = 0.0f;
             float declinationDeg = 0.0f;
             float correctionTimeSec = 8.0f;
+            // Production yaw/heading fusion weight.
             float weight = 0.0f;
+            // Independent experimental DipAHRS roll-source weight. This does
+            // not enable the observation in the final roll target; that is
+            // controlled by Config::dipAhrsRollWeight.
+            float dipAhrsWeight = 1.0f;
             float timeoutSec = 1.0f;
         } compass[2];
     };
@@ -227,6 +234,12 @@ public:
                                       float rDegSec, float &rollRateDegSec,
                                       float &pitchRateDegSec,
                                       float &headingRateDegSec);
+    // Conventional production compass heading. The calibrated aircraft-body
+    // vector is de-rolled/de-pitched, then reduced to its horizontal X/Y
+    // components. This path is deliberately independent of DipAHRS.
+    static bool tiltCompensatedMagneticHeading(
+        float bodyX, float bodyY, float bodyZ, float rollDeg, float pitchDeg,
+        float declinationDeg, float &headingDeg);
     void updateGps(float trackDeg, float groundSpeedMps, float altitudeM,
                    bool fixValid, uint32_t nowMs);
     // Supply calibrated body-frame magnetic vectors. Calibration is kept
@@ -256,6 +269,7 @@ private:
     float compassMagnitude_[2] = {0.0f, 0.0f};
     float compassRollGeometry_[2] = {0.0f, 0.0f};
     bool compassHave_[2] = {false, false};
+    bool compassRollHave_[2] = {false, false};
     float lastTrackDeg_ = 0;
     float lastAltitudeM_ = 0;
     float lastVelocityNorthMps_ = 0;
