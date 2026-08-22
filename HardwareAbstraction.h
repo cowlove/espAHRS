@@ -7,10 +7,16 @@
 enum class HalDisplayKind : uint8_t {
   None,
   GeekS3_ST7789,
-  TBeamSupreme_SH1106
+  TBeamSupreme_SH1106,
+  TDisplayS3_ST7789_Parallel
 };
 
-enum class HalBoardKind : uint8_t { GeekS3, TBeamSupreme, Headless };
+enum class HalBoardKind : uint8_t {
+  GeekS3,
+  TBeamSupreme,
+  TDisplayS3,
+  Headless
+};
 
 struct HalImuRequest {
   float sampleRateHz;
@@ -41,6 +47,9 @@ struct HalHardwareProfile {
   int gpsTx, gpsRx, gpsEnable, gpsPps;
   int logButton;
   int lcdSclk, lcdMosi, lcdCs, lcdDc, lcdRst, lcdBacklight;
+  int lcdWr, lcdRd;
+  int lcdData[8];
+  int touchSda, touchScl, touchIrq, touchRst;
   int sdCs, sdSck, sdMiso, sdMosi;
   uint8_t gpsUartIndex;
   uint32_t gpsDefaultBaud;
@@ -58,6 +67,8 @@ constexpr HalHardwareProfile makeGeekS3Profile() {
     43, 44, 255, 255,       // GPS TX/RX, enable/PPS unused on GEEK
     0,                      // start/stop button
     12, 11, 10, 8, 9, 7,    // ST7789
+    -1, -1, {-1,-1,-1,-1,-1,-1,-1,-1},
+    -1, -1, -1, -1,
     34, 36, 37, 35,         // SD SPI
     1, 38400,
     HalDisplayKind::GeekS3_ST7789,
@@ -81,10 +92,36 @@ constexpr HalHardwareProfile makeTBeamSupremeProfile() {
   p.logButton = 0;
   p.lcdSclk = 36; p.lcdMosi = 35; p.lcdCs = -1; p.lcdDc = -1;
   p.lcdRst = -1; p.lcdBacklight = -1;
+  p.lcdWr = -1; p.lcdRd = -1;
+  for (int &pin : p.lcdData) pin = -1;
+  p.touchSda = p.touchScl = p.touchIrq = p.touchRst = -1;
   p.sdCs = 47; p.sdSck = 36; p.sdMiso = 37; p.sdMosi = 35;
   p.gpsUartIndex = 1;
   p.display = HalDisplayKind::TBeamSupreme_SH1106;
   p.hasSd = true; p.hasLogButton = true;
+  return p;
+}
+
+// LilyGO T-Display-S3 touch-screen variant. These values come from the
+// verified lilygo-t-display-s3 working sketch, not generic board examples.
+// The LCD is an 8-bit parallel ST7789; the dedicated Qwiic bus and the CST816
+// touch bus are separate, and GNSS uses the adjacent GPIO1/2 UART pair.
+inline HalHardwareProfile makeTDisplayS3Profile() {
+  auto p = makeGeekS3Profile();
+  p.kind = HalBoardKind::TDisplayS3;
+  p.name = "T-DISPLAY-S3";
+  p.i2cSda = 43; p.i2cScl = 44;
+  p.gpsTx = 1; p.gpsRx = 2; p.gpsEnable = -1; p.gpsPps = -1;
+  p.logButton = -1;
+  p.lcdSclk = -1; p.lcdMosi = -1; p.lcdCs = 6; p.lcdDc = 7;
+  p.lcdRst = 5; p.lcdBacklight = 38;
+  p.lcdWr = 8; p.lcdRd = 9;
+  const int data[8] = {39,40,41,42,45,46,47,48};
+  for (int i = 0; i < 8; ++i) p.lcdData[i] = data[i];
+  p.touchSda = 18; p.touchScl = 17; p.touchIrq = 16; p.touchRst = 21;
+  p.gpsUartIndex = 1; p.gpsDefaultBaud = 38400;
+  p.display = HalDisplayKind::TDisplayS3_ST7789_Parallel;
+  p.hasSd = false; p.hasLogButton = false;
   return p;
 }
 

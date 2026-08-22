@@ -9,6 +9,7 @@
 #include <SPI.h>
 #include <SD.h>
 #include <U8g2lib.h>
+#include <TouchDrv.hpp>
 #include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
 #include <jimlib.h>
@@ -28,8 +29,15 @@
 #include "SharedUbloxGPS.h"
 #include "HardwareAbstraction.h"
 #include "DeviceConfiguration.h"
+#if defined(ESPAHRS_TDISPLAY_S3)
+#include "display.hpp"
+#endif
 
+#if defined(ESPAHRS_TDISPLAY_S3)
+HalHardwareProfile HARDWARE = makeTDisplayS3Profile();
+#else
 HalHardwareProfile HARDWARE = makeGeekS3Profile();
+#endif
 const DeviceConfiguration *DEVICE_CONFIG = &DEVICE_CONFIGURATIONS[0];
 constexpr HalImuRequest REQUESTED_IMU = {50.0f, 20.0f};
 HalImuConfiguration actualImu = {0, 0, 0.02f, 0, false};
@@ -81,6 +89,12 @@ uint8_t tbeamDisplayAddress = 0;
 Adafruit_BMP280 baro;
 Adafruit_BMP3XX bmp3;
 Adafruit_BME280 bme;
+LGFX tdisplay;
+TouchDrvCSTXXX tdisplayTouch;
+TwoWire tdisplayTouchWire = TwoWire(1);
+volatile bool tdisplayTouchIRQ = false;
+bool tdisplayTouchPresent = false;
+bool tdisplayTouchDown = false;
 class MS5837Sensor {
   uint16_t c[7]{};
   bool is02BA = false;
@@ -367,6 +381,9 @@ uint32_t bootLogDeadlineMs = 0;
 bool startSessionLog();
 
 HalBoardKind detectBoard() {
+#if defined(ESPAHRS_TDISPLAY_S3)
+  return HalBoardKind::TDisplayS3;
+#else
   // The AXP2101 at 0x34 on the dedicated GPIO42/41 bus is a strong,
   // non-destructive T-Beam Supreme signature. GEEK has no device there.
   Wire1.begin(42, 41);
@@ -374,10 +391,38 @@ HalBoardKind detectBoard() {
   Wire1.beginTransmission(AXP2101_SLAVE_ADDRESS);
   if (Wire1.endTransmission() == 0) return HalBoardKind::TBeamSupreme;
   return HalBoardKind::GeekS3;
+#endif
 }
 
 void setupDisplay() {
   if (HARDWARE.display == HalDisplayKind::None) return;
+#if defined(ESPAHRS_TDISPLAY_S3)
+  pinMode(HARDWARE.lcdBacklight, OUTPUT);
+  digitalWrite(HARDWARE.lcdBacklight, HIGH);
+  tdisplay.init();
+  tdisplay.setRotation(1);
+  tdisplay.fillScreen(TFT_BLACK);
+  tdisplay.setTextDatum(middle_center);
+  tdisplay.setTextColor(TFT_WHITE, TFT_BLACK);
+  tdisplay.drawString("espAHRS T-Display-S3", 160, 58);
+  tdisplay.drawString("display online", 160, 82);
+  tdisplayTouchWire.begin(HARDWARE.touchScl, HARDWARE.touchSda, 400000);
+  tdisplayTouchPresent = tdisplayTouch.begin(tdisplayTouchWire,
+      CST816_SLAVE_ADDRESS, HARDWARE.touchScl, HARDWARE.touchSda);
+  tdisplayTouch.setSwapXY(true);
+  tdisplayTouch.setResolution(320, 170);
+  tdisplayTouch.setTargetResolution(320, 170);
+  tdisplayTouch.setMirrorXY(false, false);
+  pinMode(HARDWARE.touchIrq, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(HARDWARE.touchIrq), []() {
+    tdisplayTouchIRQ = true;
+  }, FALLING);
+  Serial.printf("T-Display-S3 LCD parallel OK; touch CST816 SDA=%d SCL=%d IRQ=%d RST=%d: %s\n",
+                HARDWARE.touchSda, HARDWARE.touchScl, HARDWARE.touchIrq,
+                HARDWARE.touchRst, tdisplayTouchPresent ? "OK" : "ABSENT");
+  displayOk = true;
+  return;
+#endif
   if (HARDWARE.display == HalDisplayKind::TBeamSupreme_SH1106) {
   Wire.begin(HARDWARE.i2cSda, HARDWARE.i2cScl);
   Wire.setClock(20000); // Conservative rate for marginal external wiring.
@@ -421,6 +466,25 @@ void setupDisplay() {
 // rendering and is called by the low-priority display task.
 void halUpdateDisplay(const HalDisplayStatus &status) {
   if (!displayOk) return;
+#if defined(ESPAHRS_TDISPLAY_S3)
+  tdisplay.fillRect(0, 0, 320, 170, TFT_BLACK);
+  tdisplay.setTextColor(status.gps ? TFT_GREEN : TFT_RED, TFT_BLACK);
+  tdisplay.drawString(status.gps ? "GPS OK" : "GPS --", 42, 16);
+  tdisplay.setTextColor(status.imu1 ? TFT_GREEN : TFT_RED, TFT_BLACK);
+  tdisplay.drawString(status.imu1 ? "IMU OK" : "IMU --", 112, 16);
+  tdisplay.setTextColor(status.baro ? TFT_GREEN : TFT_RED, TFT_BLACK);
+  tdisplay.drawString(status.baro ? "BARO OK" : "BARO --", 188, 16);
+  tdisplay.setTextColor(TFT_WHITE, TFT_BLACK);
+  tdisplay.setTextSize(2);
+  tdisplay.drawString(String("ROLL ") + String(status.rollDeg, 1), 80, 65);
+  tdisplay.drawString(String("PITCH ") + String(status.pitchDeg, 1), 235, 65);
+  tdisplay.setTextSize(1);
+  tdisplay.drawString(String("HDG ") + String(status.headingDeg, 1), 80, 105);
+  tdisplay.drawString(String("GPS ") + String(status.groundSpeedMps, 1) + " m/s", 235, 105);
+  tdisplay.setTextColor(status.logging ? TFT_YELLOW : TFT_DARKGREY, TFT_BLACK);
+  tdisplay.drawString(status.logging ? "LOGGING" : "READY", 160, 145);
+  return;
+#endif
   uint32_t nowMs = status.uptimeSeconds * 1000UL;
   if (HARDWARE.display == HalDisplayKind::TBeamSupreme_SH1106) {
   char line[32];

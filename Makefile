@@ -1,45 +1,62 @@
-BOARD ?= esp32s3
+DEVICE ?= geek
 PORT ?= /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_28:37:2F:F8:24:7C-if00
 UPLOAD_PORT := $(PORT)
-MONITOR_PORT := $(PORT)
-CHIP ?= esp32
-DEVICE ?= geek
-ALIBS = ${HOME}/Arduino/libraries
-GIT_VERSION := "$(shell git describe --abbrev=8 --dirty --always --tags 2>/dev/null || echo local)"
+ARDUINO_CLI ?= $(HOME)/bin/arduino-cli
+PARTITION_SCHEME ?= huge_app
+FQBN ?= esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,PartitionScheme=$(PARTITION_SCHEME)
+BUILD_DIR ?= build/$(DEVICE)-$(PARTITION_SCHEME)
+LEGACY_MAKEFILE := Makefile.makeEspArduino
+ALIBS := $(HOME)/Arduino/libraries
+GIT_VERSION := $(shell git describe --abbrev=8 --dirty --always --tags 2>/dev/null || echo local)
 
-CDC_ON_BOOT = 1
-# The ESP32-S3 Geek is the active and default hardware target. The former
-# T-Beam target is abandoned and retained only as historical source code.
-ifeq ($(DEVICE),geek)
-BUILD_MEMORY_TYPE = qio_qspi
-BUILD_EXTRA_FLAGS += -DBOARD_HAS_PSRAM
+# Keep the library roots explicit.  LovyanGFX is only needed by the T-Display
+# target; excluding it from the default build avoids its header-name collision
+# with the C++ standard library.
+LIBRARY_DIRS := \
+	$(ALIBS)/esp32jimlib \
+	$(ALIBS)/Arduino_CRC32 \
+	$(ALIBS)/Adafruit_GFX_Library \
+	$(ALIBS)/Adafruit_ST7735_and_ST7789_Library \
+	$(ALIBS)/Adafruit_LSM9DS1_Library \
+	$(ALIBS)/SensorLib \
+	$(ALIBS)/XPowersLib \
+	$(ALIBS)/U8g2 \
+	$(ALIBS)/Adafruit_BMP280_Library \
+	$(ALIBS)/Adafruit_LIS3MDL \
+	$(ALIBS)/Adafruit_BMP3XX_Library \
+	$(ALIBS)/Adafruit_BME280_Library \
+	$(ALIBS)/Adafruit_BusIO \
+	$(ALIBS)/Adafruit_Unified_Sensor
+
+ifeq ($(DEVICE),tdisplay-s3)
+BUILD_FLAGS := -DESPAHRS_TDISPLAY_S3
+LIBRARY_DIRS += $(ALIBS)/LovyanGFX
 else
-BUILD_MEMORY_TYPE = qio_qspi
-BUILD_EXTRA_FLAGS += -DBOARD_HAS_PSRAM
+BUILD_FLAGS :=
 endif
-BUILD_EXTRA_FLAGS += -DGIT_VERSION=\"$(GIT_VERSION)\"
-EXCLUDE_DIRS = ${ALIBS}/lvgl|${ALIBS}/TFT_eSPI|${ALIBS}/LovyanGFX|${ALIBS}/jimlib|${ALIBS}/esp32csim
-LIBS += ${ALIBS}/esp32jimlib ${ALIBS}/Arduino_CRC32
-LIBS += ${ALIBS}/Adafruit_GFX_Library ${ALIBS}/Adafruit_ST7735_and_ST7789_Library
-LIBS += ${ALIBS}/Adafruit_LSM9DS1_Library
-LIBS += ${ALIBS}/SparkFun_ICM-20948_ArduinoLibrary/src/ICM_20948.cpp
-LIBS += ${ALIBS}/SensorLib
-LIBS += ${ALIBS}/XPowersLib
-LIBS += ${ALIBS}/U8g2
-BUILD_EXTRA_FLAGS += -I${ALIBS}/U8g2/src
-BUILD_EXTRA_FLAGS += -I${ALIBS}/SparkFun_ICM-20948_ArduinoLibrary/src
-LIBS += ${ALIBS}/Adafruit_BMP280_Library ${ALIBS}/Adafruit_LIS3MDL
-LIBS += ${ALIBS}/Adafruit_BMP3XX_Library
-LIBS += ${ALIBS}/Adafruit_BME280_Library
-LIBS += ${ALIBS}/SparkFun_u-blox_GNSS_Arduino_Library/src/SparkFun_u-blox_GNSS_Arduino_Library.cpp
-BUILD_EXTRA_FLAGS += -I${ALIBS}/SparkFun_u-blox_GNSS_Arduino_Library/src
-LIBS += ${ALIBS}/Adafruit_BusIO ${ALIBS}/Adafruit_Unified_Sensor
-LIBS += ${ALIBS}/esp32jimlib/src/espNowMux.cpp
-LIBS += ${ALIBS}/esp32jimlib/src/jimlib.cpp
-LIBS += ${ALIBS}/esp32jimlib/src/simulatedFailures.cpp
-LIBS += ${ALIBS}/Arduino_CRC32/src/Arduino_CRC32.cpp ${ALIBS}/Arduino_CRC32/src/crc.cpp
 
-include ${ALIBS}/makeEspArduino/makeEspArduino.mk
+BUILD_FLAGS += -DBOARD_HAS_PSRAM -DGIT_VERSION=\"$(GIT_VERSION)\"
+LIBRARY_ARGS := $(foreach dir,$(LIBRARY_DIRS),--libraries $(dir))
+
+.PHONY: all compile upload legacy
+all: compile
+
+compile:
+	time $(ARDUINO_CLI) compile --fqbn $(FQBN) $(LIBRARY_ARGS) \
+		--build-path $(BUILD_DIR) -v \
+		--build-property "compiler.cpp.extra_flags=$(BUILD_FLAGS)" .
+
+upload: compile
+	$(ARDUINO_CLI) upload --fqbn $(FQBN) --input-dir $(BUILD_DIR) --port $(UPLOAD_PORT)
+
+# The old makeEspArduino workflow remains available for incremental
+# development.  Invoke `make legacy` for its normal build, or
+# `make legacy-TARGET` for any makeEspArduino target (upload, monitor, etc.).
+legacy:
+	$(MAKE) -f $(LEGACY_MAKEFILE) all SKETCH=espAHRS.ino DEVICE=$(DEVICE) BOARD=esp32s3 CHIP=esp32 PORT=$(PORT)
+
+legacy-%:
+	$(MAKE) -f $(LEGACY_MAKEFILE) $* SKETCH=espAHRS.ino DEVICE=$(DEVICE) BOARD=esp32s3 CHIP=esp32 PORT=$(PORT)
 
 .PHONY: cat
 cat:
@@ -47,7 +64,7 @@ cat:
 
 .PHONY: replay flight-results dipahrs-test ahrs-kinematics-test log-metadata-test
 replay:
-	$(CXX) -std=c++17 -O2 -I. replay.cpp AircraftAHRS.cpp -o replay
+	$(CXX) -std=c++17 -O2 -I. host-tests/replay.cpp AircraftAHRS.cpp -o replay
 
 flight-results: replay
 	@mkdir -p flight-data-primary/results
@@ -59,15 +76,15 @@ flight-results: replay
 	done
 
 dipahrs-test:
-	$(CXX) -std=c++11 -O2 -I. dipahrs_test.cpp -o /tmp/esp32-s3-geek-dipahrs-test
+	$(CXX) -std=c++11 -O2 -I. host-tests/dipahrs_test.cpp -o /tmp/esp32-s3-geek-dipahrs-test
 	/tmp/esp32-s3-geek-dipahrs-test
 
 ahrs-kinematics-test:
-	$(CXX) -std=c++17 -O2 -I. aircraft_ahrs_kinematics_test.cpp AircraftAHRS.cpp -o /tmp/esp32-s3-geek-ahrs-kinematics-test
+	$(CXX) -std=c++17 -O2 -I. host-tests/aircraft_ahrs_kinematics_test.cpp AircraftAHRS.cpp -o /tmp/esp32-s3-geek-ahrs-kinematics-test
 	/tmp/esp32-s3-geek-ahrs-kinematics-test
 
 log-metadata-test: replay
-	$(CXX) -std=c++17 -O2 -I. fusion_log_metadata_test.cpp -o /tmp/espahrs-log-metadata-test
+	$(CXX) -std=c++17 -O2 -I. host-tests/fusion_log_metadata_test.cpp -o /tmp/espahrs-log-metadata-test
 	/tmp/espahrs-log-metadata-test
 	./replay /tmp/espahrs-metadata-v2.bin >/dev/null
 	! ./replay /tmp/espahrs-metadata-v2-stale.bin >/dev/null 2>&1
