@@ -89,12 +89,14 @@ uint8_t tbeamDisplayAddress = 0;
 Adafruit_BMP280 baro;
 Adafruit_BMP3XX bmp3;
 Adafruit_BME280 bme;
+#if defined(ESPAHRS_TDISPLAY_S3)
 LGFX tdisplay;
 TouchDrvCSTXXX tdisplayTouch;
 TwoWire tdisplayTouchWire = TwoWire(1);
 volatile bool tdisplayTouchIRQ = false;
 bool tdisplayTouchPresent = false;
 bool tdisplayTouchDown = false;
+#endif
 class MS5837Sensor {
   uint16_t c[7]{};
   bool is02BA = false;
