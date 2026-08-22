@@ -1080,8 +1080,13 @@ void updateGPS(uint32_t nowMs) {
 
 void setup() {
   Serial.begin(115200); delay(500);
-  HARDWARE = detectBoard() == HalBoardKind::TBeamSupreme
+  HalBoardKind detectedBoard = detectBoard();
+#if defined(ESPAHRS_TDISPLAY_S3)
+  HARDWARE = makeTDisplayS3Profile();
+#else
+  HARDWARE = detectedBoard == HalBoardKind::TBeamSupreme
       ? makeTBeamSupremeProfile() : makeGeekS3Profile();
+#endif
   Serial.printf("HAL board auto-detect: %s\n", HARDWARE.name);
   uint8_t deviceMac[6];
   esp_read_mac(deviceMac, ESP_MAC_WIFI_STA);
