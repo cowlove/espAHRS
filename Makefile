@@ -26,7 +26,9 @@ LIBRARY_DIRS := \
 	$(ALIBS)/Adafruit_BMP3XX_Library \
 	$(ALIBS)/Adafruit_BME280_Library \
 	$(ALIBS)/Adafruit_BusIO \
-	$(ALIBS)/Adafruit_Unified_Sensor
+	$(ALIBS)/Adafruit_Unified_Sensor \
+	$(ALIBS)/SparkFun_Qwiic_6DoF_LSM6DSO_Arduino_Library \
+	$(ALIBS)/SparkFun_MicroPressure_Library
 
 ifeq ($(DEVICE),tdisplay-s3)
 BUILD_FLAGS := -DESPAHRS_TDISPLAY_S3

@@ -19,6 +19,8 @@
 #include <Adafruit_BMP3XX.h>
 #include <Adafruit_BME280.h>
 #include <ICM_20948.h>
+#include <SparkFunLSM6DSO.h>
+#include <SparkFun_MicroPressure.h>
 #include <SensorQMI8658.hpp>
 #include <SensorQMC6310.hpp>
 #include <XPowersLib.h>
@@ -80,6 +82,8 @@ ReliableStreamESPNow espnow("GEEK", true /* alwaysBroadcast */);
 HardwareSerial gpsSerial(1);
 Adafruit_LSM9DS1 imu;
 ICM_20948_I2C icm20948;
+LSM6DSO lsm6dso;
+SparkFun_MicroPressure microPressure;
 SensorQMI8658 qmi8658;
 SensorQMC6310 qmc6310;
 XPowersAXP2101 pmu;
@@ -221,11 +225,11 @@ public:
 };
 MS5837Sensor ms5837;
 bool bmeOk = false;
-enum class BaroKind { None, BMP280, BMP388, BMP390, BME280, MS5837 };
+enum class BaroKind { None, BMP280, BMP388, BMP390, BME280, MS5837, MicroPressure };
 BaroKind baroKind = BaroKind::None;
 float latestBaroPressurePa = NAN, latestBaroAltitudeM = NAN;
 uint32_t baroReadyAfterMs = 0;
-enum class ImuKind { None, LSM9DS1, ICM20948, QMI8658 };
+enum class ImuKind { None, LSM9DS1, ICM20948, QMI8658, LSM6DSO };
 ImuKind imuKind = ImuKind::None;
 uint32_t lastPrimaryImuSampleMs = 0;
 uint32_t lastImuRecoveryAttemptMs = 0;
@@ -255,6 +259,7 @@ static const char *baroKindName() {
   case BaroKind::BMP390: return "BMP390";
   case BaroKind::BME280: return "BME280";
   case BaroKind::MS5837: return "MS5837";
+  case BaroKind::MicroPressure: return "MicroPressure";
   default: return "ABSENT";
   }
 }
@@ -948,6 +953,39 @@ void setupBerryIMU() {
                 actualImu.hardwareLowPassEnabled ? "ON" : "OFF");
   return;
   }
+#if defined(ESPAHRS_TDISPLAY_S3)
+  // The T-Display-S3 carries the SparkFun Qwiic sensors on its external bus.
+  // Probe both legal LSM6DSO addresses because SA0 is board/configuration
+  // dependent.  This path deliberately does not claim a magnetometer: the
+  // LSM6DSO is accelerometer + gyro only.
+  bool lsmFound = lsm6dso.begin(DEFAULT_ADDRESS, Wire);
+  if (!lsmFound) lsmFound = lsm6dso.begin(ALT_ADDRESS, Wire);
+  if (lsmFound) {
+    lsm6dso.imuSettings.accelEnabled = true;
+    lsm6dso.imuSettings.gyroEnabled = true;
+    lsm6dso.imuSettings.accelRange = 4;
+    lsm6dso.imuSettings.gyroRange = 245;
+    lsm6dso.imuSettings.accelSampleRate = 104;
+    lsm6dso.imuSettings.gyroSampleRate = 104;
+    lsmFound = lsm6dso.beginSettings() == IMU_SUCCESS;
+  }
+  imuOk = lsmFound;
+  imuKind = imuOk ? ImuKind::LSM6DSO : ImuKind::None;
+  if (imuOk) {
+    actualImu = {104.0f, 104.0f, 1.0f / 104.0f,
+                 REQUESTED_IMU.lowPassCutoffHz, true};
+    ahrs.setGyroIntegrationDt(actualImu.integrationDtSec);
+  }
+  bool pressureFound = microPressure.begin(DEFAULT_ADDRESS, Wire);
+  baroOk = pressureFound;
+  baroKind = pressureFound ? BaroKind::MicroPressure : BaroKind::None;
+  Serial.printf("T-Display LSM6DSO=%s MicroPressure=%s\n",
+                imuOk ? "OK" : "ABSENT", baroOk ? "0x18" : "ABSENT");
+  Serial.printf("HAL IMU requested=%.1fHz actual gyro=%.2fHz accel=%.2fHz dt=%.6fs\n",
+                REQUESTED_IMU.sampleRateHz, actualImu.gyroRateHz,
+                actualImu.accelRateHz, actualImu.integrationDtSec);
+  return;
+#endif
   Wire.beginTransmission(0x0D); // QMC5883L compass on the SEQURE GPS module.
   qmcOk = Wire.endTransmission() == 0;
   Serial.printf("QMC5883L I2C address=0x0D: %s\n", qmcOk ? "OK" : "not detected");
@@ -1005,7 +1043,8 @@ void setupBerryIMU() {
                 qmcOk ? "OK" : "ABSENT",
                 imuKind == ImuKind::ICM20948 ? "ICM20948" :
                 imuKind == ImuKind::LSM9DS1 ? "LSM9DS1" :
-                imuKind == ImuKind::QMI8658 ? "QMI8658" : "ABSENT",
+                imuKind == ImuKind::QMI8658 ? "QMI8658" :
+                imuKind == ImuKind::LSM6DSO ? "LSM6DSO" : "ABSENT",
                 baroKindName());
 }
 
@@ -1226,6 +1265,14 @@ void loop() {
       ax = icm20948.accX() * 0.00980665f; ay = icm20948.accY() * 0.00980665f; az = icm20948.accZ() * 0.00980665f;
       gx = icm20948.gyrX(); gy = icm20948.gyrY(); gz = icm20948.gyrZ();
       mx = icm20948.magX(); my = icm20948.magY(); mz = icm20948.magZ();
+    } else if (imuKind == ImuKind::LSM6DSO) {
+      ax = lsm6dso.readFloatAccelX() * 9.80665f;
+      ay = lsm6dso.readFloatAccelY() * 9.80665f;
+      az = lsm6dso.readFloatAccelZ() * 9.80665f;
+      gx = lsm6dso.readFloatGyroX();
+      gy = lsm6dso.readFloatGyroY();
+      gz = lsm6dso.readFloatGyroZ();
+      mx = my = mz = NAN;
     } else {
       imu.getEvent(&accel, &mag, &gyro, nullptr);
       ax = accel.acceleration.x; ay = accel.acceleration.y; az = accel.acceleration.z;
@@ -1267,7 +1314,8 @@ void loop() {
 afterPrimaryImu:
   float secondaryTemp = NAN;
   if (gyroDrift.active) {
-    float primaryTemp = imuKind == ImuKind::QMI8658 ? qmi8658.getTemperature_C() : NAN;
+    float primaryTemp = imuKind == ImuKind::QMI8658 ? qmi8658.getTemperature_C() :
+                        imuKind == ImuKind::LSM6DSO ? lsm6dso.readTempC() : NAN;
     gyroDrift.update(millis(), primaryTemp, secondaryTemp);
   }
   uint32_t baroSampleUs = micros();
@@ -1277,7 +1325,8 @@ afterPrimaryImu:
   if (baroOk && baroDue) {
     nextBaroSampleUs = baroSampleUs + BARO_OUTPUT_PERIOD_US;
     bool readOk = true;
-    if (baroKind == BaroKind::BME280) pressurePa = bme.readPressure();
+    if (baroKind == BaroKind::MicroPressure) pressurePa = microPressure.readPressure(PA);
+    else if (baroKind == BaroKind::BME280) pressurePa = bme.readPressure();
     else if (baroKind == BaroKind::BMP280) pressurePa = baro.readPressure();
     else {
       readOk = bmp3.performReading();
