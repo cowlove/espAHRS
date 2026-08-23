@@ -31,9 +31,7 @@
 #include "SharedUbloxGPS.h"
 #include "HardwareAbstraction.h"
 #include "DeviceConfiguration.h"
-#if defined(ESPAHRS_TDISPLAY_S3)
 #include "display.hpp"
-#endif
 
 #if defined(ESPAHRS_TDISPLAY_S3)
 HalHardwareProfile HARDWARE = makeTDisplayS3Profile();
@@ -503,14 +501,9 @@ void setupDisplay() {
                 HARDWARE.touchSda, HARDWARE.touchScl, HARDWARE.touchIrq,
                 HARDWARE.touchRst, tdisplayTouchPresent ? "OK" : "ABSENT");
   displayOk = true;
-  return;
-#endif
+  // Continue with the remaining known devices; discovery is independent of
+  // the selected display HAL.
   if (HARDWARE.display == HalDisplayKind::TBeamSupreme_SH1106) {
-  Wire.begin(HARDWARE.i2cSda, HARDWARE.i2cScl);
-  // The T-Display Qwiic bus has short local wiring; use a standard speed.
-  // Keep the older T-Beam path conservative for its longer harness.
-  Wire.setClock(HARDWARE.kind == HalBoardKind::TDisplayS3 ? 100000 : 20000);
-  Wire.setTimeOut(20);
   // Both addresses ACK on this board. Test 0x3D first: it is the alternate
   // SH1106 address and selecting 0x3C produced no visible pixels.
   for (uint8_t address : {uint8_t(0x3D), uint8_t(0x3C)}) {
@@ -538,11 +531,26 @@ void setupDisplay() {
   }
   return;
   }
+#endif
   pinMode(HARDWARE.lcdBacklight, OUTPUT); digitalWrite(HARDWARE.lcdBacklight, HIGH);
   display.init(135, 240); display.setRotation(1); display.fillScreen(ST77XX_BLACK);
   display.setTextColor(ST77XX_WHITE, ST77XX_BLACK); display.setTextSize(2);
   display.setCursor(4, 4); display.println("ESP32-S3 Geek");
   display.println("hardware test"); displayOk = true;
+}
+
+// Application-level sensor bus setup. HAL supplies only the selected pins;
+// the device profile supplies the one bus speed. This must run before the
+// display or sensor code performs an address scan or initialization probe.
+void setupI2cBus() {
+  Wire.begin(HARDWARE.i2cSda, HARDWARE.i2cScl);
+  const uint32_t speed = (DEVICE_CONFIG &&
+      DEVICE_CONFIG->calibration.imu[0].i2cBusSpeedHz)
+      ? DEVICE_CONFIG->calibration.imu[0].i2cBusSpeedHz : 100000;
+  Wire.setClock(speed);
+  Wire.setTimeOut(20);
+  Serial.printf("I2C bus SDA=%d SCL=%d speed=%lu Hz\n",
+                HARDWARE.i2cSda, HARDWARE.i2cScl, (unsigned long)speed);
 }
 
 // HAL display entry point. The application owns the task and publishes a
@@ -712,6 +720,7 @@ void updateLoggingButton() {
 void displayUpdateTask(void *) {
   HalDisplayStatus status{};
   for (;;) {
+#if defined(ESPAHRS_TDISPLAY_S3)
     // The CST816 IRQ only wakes the low-priority display task; all touch I2C
     // traffic remains out of the sensor/AHRS loop.
     if (tdisplayTouchPresent && tdisplayTouchIRQ) {
@@ -731,15 +740,18 @@ void displayUpdateTask(void *) {
         tdisplayTouchDown = false;
       }
     }
+#endif
     if (displayStatusMutex &&
         xSemaphoreTake(displayStatusMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
       status = latestDisplayStatus;
       xSemaphoreGive(displayStatusMutex);
       halUpdateDisplay(status);
+#if defined(ESPAHRS_TDISPLAY_S3)
       if (tdisplayLastTouchX >= 0 && tdisplayLastTouchY >= 0) {
         tdisplay.fillCircle(tdisplayLastTouchX, tdisplayLastTouchY, 5,
                             tdisplayTouchDown ? TFT_GREEN : TFT_DARKGREY);
       }
+#endif
     }
     // Priority 0 keeps display transfers below the sensor/AHRS loop.  The
     // short delay also prevents a failed/unplugged panel from being retried
@@ -969,9 +981,8 @@ void setupBerryIMU() {
   // BMP280=0x76 (some modules strap the barometer to 0x77).
   // Waveshare's Geek I2C example uses GPIO16/17. Explicit pins are required:
   // the ESP32-S3 defaults can overlap the LCD's DC/RESET pins (8/9).
-  Wire.begin(HARDWARE.i2cSda, HARDWARE.i2cScl);
-  Wire.setClock(20000); // Conservative rate for marginal external wiring.
-  Wire.setTimeOut(20); // Missing Qwiic hardware must never stall the test.
+  // setupI2cBus() has already selected the speed before any probe.
+  // Missing Qwiic hardware must never stall the test.
   // The external secondary IMU is intentionally not probed.  IMU0 is the
   // only production sensor used by the AHRS; leaving the optional device
   // untouched avoids unnecessary I2C traffic and ambiguous health reporting.
@@ -1053,8 +1064,8 @@ void setupBerryIMU() {
                 actualImu.hardwareLowPassEnabled ? "ON" : "OFF");
   return;
   }
-#if defined(ESPAHRS_TDISPLAY_S3)
-  // The T-Display-S3 carries the SparkFun Qwiic sensors on its external bus.
+  // Probe the known external sensors independently of the display HAL.
+  {
   // Probe both legal LSM6DSO addresses because SA0 is board/configuration
   // dependent.  This path deliberately does not claim a magnetometer: the
   // LSM6DSO is accelerometer + gyro only.
@@ -1106,18 +1117,19 @@ void setupBerryIMU() {
   Serial.printf("HAL IMU requested=%.1fHz actual gyro=%.2fHz accel=%.2fHz dt=%.6fs\n",
                 REQUESTED_IMU.sampleRateHz, actualImu.gyroRateHz,
                 actualImu.accelRateHz, actualImu.integrationDtSec);
-  return;
-#endif
+  }
   Wire.beginTransmission(0x0D); // QMC5883L compass on the SEQURE GPS module.
   qmcOk = Wire.endTransmission() == 0;
   Serial.printf("QMC5883L I2C address=0x0D: %s\n", qmcOk ? "OK" : "not detected");
   // Prefer the newer SparkFun ICM-20948, then fall back to the BerryIMUv3
   // LSM9DS1. ADR selects 0x68/0x69 on the ICM board; the library's ad0val
   // argument maps directly to that address bit.
-  imuOk = probePrimaryIcm();
   if (!imuOk) {
-    imuOk = imu.begin();
-    if (imuOk) imuKind = ImuKind::LSM9DS1;
+    imuOk = probePrimaryIcm();
+    if (!imuOk) {
+      imuOk = imu.begin();
+      if (imuOk) imuKind = ImuKind::LSM9DS1;
+    }
   }
   if (imuKind == ImuKind::ICM20948) {
     // ICM-20948 ODR = 1.1 kHz/(1+gyro_div), 1.125 kHz/(1+accel_div).
@@ -1128,15 +1140,16 @@ void setupBerryIMU() {
                   ICM_RATE_PROFILE.gyroOdrHz, ICM_RATE_PROFILE.accelOdrHz,
                   ICM_RATE_PROFILE.ahrsIntegrationDtSec);
   }
-  baroOk = ms5837.begin();
-  if (baroOk) {
+  if (!baroOk && ms5837.begin()) {
+    baroOk = true;
     baroKind = BaroKind::MS5837;
-  } else {
-  baroOk = baro.begin(0x76);
-  if (!baroOk) baroOk = baro.begin(0x77);
-  if (baroOk) {
-    baroKind = BaroKind::BMP280;
-  } else {
+  }
+  if (!baroOk) {
+    baroOk = baro.begin(0x76);
+    if (!baroOk) baroOk = baro.begin(0x77);
+    if (baroOk) {
+      baroKind = BaroKind::BMP280;
+    } else {
     uint8_t chipId = 0;
     bool chipIdOk = i2cReadRegister(BERRY_BARO_ADDRESS, 0x00, chipId);
     Serial.printf("Berry barometer address=0x%02X chip_id=%s0x%02X\n",
@@ -1154,7 +1167,7 @@ void setupBerryIMU() {
       // keep them out of altitude/climb state until the compensation settles.
       baroReadyAfterMs = millis() + 2500;
     }
-  }
+    }
   }
   if (imuKind == ImuKind::LSM9DS1) {
     imu.setupAccel(imu.LSM9DS1_ACCELRANGE_4G, imu.LSM9DS1_ACCELDATARATE_119HZ);
@@ -1256,10 +1269,6 @@ void setup() {
     DEVICE_CONFIG = &UNCALIBRATED_DEVICE_CONFIGURATION;
     Serial.printf("DEVICE CONFIG UNKNOWN MAC=%02X:%02X:%02X:%02X:%02X:%02X; using identity calibration\n",
                   deviceMac[0],deviceMac[1],deviceMac[2],deviceMac[3],deviceMac[4],deviceMac[5]);
-  } else if (DEVICE_CONFIG->boardKind != HARDWARE.kind) {
-    Serial.printf("DEVICE CONFIG BOARD MISMATCH config=%s hal=%s; using identity calibration\n",
-                  DEVICE_CONFIG->name, HARDWARE.name);
-    DEVICE_CONFIG = &UNCALIBRATED_DEVICE_CONFIGURATION;
   } else {
     Serial.printf("DEVICE CONFIG %s revision=%s\n", DEVICE_CONFIG->name, DEVICE_CONFIG->revision);
   }
@@ -1295,7 +1304,7 @@ void setup() {
   }
   setupGPS(); setupG5Logging();
 #else
-  setupDisplay(); startDisplayUpdateTask(); setupStorage(); setupBerryIMU(); setupGPS(); setupG5Logging();
+  setupI2cBus(); setupDisplay(); startDisplayUpdateTask(); setupStorage(); setupBerryIMU(); setupGPS(); setupG5Logging();
 #endif
   qmcPOk = setupQmc5883p();
   Serial.printf("LCD=%s SD=%s GPS=%s QMC=%s IMU=%s BARO=%s flash=%uMB PSRAM=%s freeRAM=%uKB freePSRAM=%uKB totalPSRAM=%uKB\n", displayOk ? "OK" : "FAIL",
@@ -1362,7 +1371,6 @@ void loop() {
                                                 g5Packet.data(), g5Packet.size());
     Serial.printf("G5_PACKET len=%u\n", (unsigned)g5Packet.size());
   }
-  recoverGeekImus(millis());
   if (baroOk && baroKind == BaroKind::MS5837) ms5837.service(millis());
   if (baroOk && baroKind == BaroKind::MicroPressure &&
       !DISABLE_MICROPRESSURE_FOR_LOOP_TEST) microPressure.service();
@@ -1395,7 +1403,11 @@ void loop() {
       // guaranteed to be asserted simultaneously, and requiring both was
       // rejecting every poll on the T-Display.  The gyro runs at the same
       // ODR and is fetched in the same burst.
-      if ((dataReady & ACCEL_DATA_READY) == 0) goto afterPrimaryImu;
+      // The driver reports IMU_GENERIC_ERROR (0xFF) when the status-register
+      // read itself fails. Do not mistake that sentinel for all data-ready
+      // bits set, or immediately issue a second failing transaction.
+      if (dataReady == IMU_GENERIC_ERROR ||
+          (dataReady & ACCEL_DATA_READY) == 0) goto afterPrimaryImu;
       // The six convenience accessors each perform a separate I2C read (and
       // reread the range registers).  Gyro and accel output registers are
       // contiguous, so fetch all 12 bytes in one burst instead.

@@ -12,6 +12,10 @@ GIT_VERSION := "$(shell git describe --abbrev=8 --dirty --always --tags 2>/dev/n
 
 BUILD_MEMORY_TYPE = qio_qspi
 BUILD_EXTRA_FLAGS += -DBOARD_HAS_PSRAM -DGIT_VERSION=\"$(GIT_VERSION)\"
+# Use the ESP32-S3 native USB CDC serial interface for every HAL.  Keeping
+# this outside the display conditional prevents GEEK builds from silently
+# falling back to the non-CDC default and makes `make cat` consistent.
+BUILD_EXTRA_FLAGS += -DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1
 EXCLUDE_DIRS = ${ALIBS}/lvgl|${ALIBS}/TFT_eSPI|${ALIBS}/LovyanGFX|${ALIBS}/jimlib|${ALIBS}/esp32csim
 LIBS += ${ALIBS}/esp32jimlib ${ALIBS}/Arduino_CRC32
 LIBS += ${ALIBS}/Adafruit_GFX_Library ${ALIBS}/Adafruit_ST7735_and_ST7789_Library
@@ -33,9 +37,6 @@ LIBS += ${ALIBS}/Arduino_CRC32/src/Arduino_CRC32.cpp ${ALIBS}/Arduino_CRC32/src/
 ifeq ($(DEVICE),tdisplay-s3)
 BUILD_EXTRA_FLAGS += -DESPAHRS_TDISPLAY_S3
 #BUILD_EXTRA_FLAGS += -I${ALIBS}/LovyanGFX/src
-# Match the Arduino-CLI board options USBMode=hwcdc,CDCOnBoot=cdc so
-# Arduino Serial uses the native USB CDC interface on the T-Display-S3.
-BUILD_EXTRA_FLAGS += -DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1
 BUILD_EXTRA_FLAGS += -DESP_PLATFORM -DCONFIG_IDF_TARGET_ESP32S3 -DBOARD_HAS_PSRAM -DGIT_VERSION=\"$(GIT_VERSION)\"
 LIBS += ${ALIBS}/LovyanGFX
 # LovyanGFX contains many platform backends and an internal limits.h whose

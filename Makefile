@@ -1,4 +1,5 @@
 DEVICE ?= tdisplay-s3
+.DEFAULT_GOAL := all
 PORT ?= /dev/ttyACM0
 V := 1
 VERBOSE=1
@@ -7,7 +8,6 @@ ARDUINO_CLI ?= $(HOME)/bin/arduino-cli
 PARTITION_SCHEME ?= huge_app
 FQBN ?= esp32:esp32:esp32s3:USBMode=hwcdc,CDCOnBoot=cdc,PartitionScheme=$(PARTITION_SCHEME)
 BUILD_DIR ?= build/$(DEVICE)-$(PARTITION_SCHEME)
-LEGACY_MAKEFILE := Makefile.makeEspArduino
 ALIBS := $(HOME)/Arduino/libraries
 GIT_VERSION := $(shell git describe --abbrev=8 --dirty --always --tags 2>/dev/null || echo local)
 
@@ -42,27 +42,18 @@ endif
 BUILD_FLAGS += -DESP_PLATFORM -DCONFIG_IDF_TARGET_ESP32S3 -DBOARD_HAS_PSRAM -DGIT_VERSION=\"$(GIT_VERSION)\"
 LIBRARY_ARGS := $(foreach dir,$(LIBRARY_DIRS),--libraries $(dir))
 
-.PHONY: all compile upload legacy
-all: compile
-
-compile:
+.PHONY: cli-compile cli-upload
+cli-compile:
 	time $(ARDUINO_CLI) compile --fqbn $(FQBN) $(LIBRARY_ARGS) \
 		--build-path $(BUILD_DIR) -v \
 		--build-property "compiler.cpp.extra_flags=$(BUILD_FLAGS)" .
 
-upload: compile
+cli-upload: cli-compile
 	$(ARDUINO_CLI) upload --fqbn $(FQBN) --input-dir $(BUILD_DIR) --port $(UPLOAD_PORT)
 
-# The old makeEspArduino workflow remains available for incremental
-# development.  Invoke `make legacy` for its normal build, or
-# `make legacy-TARGET` for any makeEspArduino target (upload, monitor, etc.).
-legacy:
-	$(MAKE) -f $(LEGACY_MAKEFILE) all SKETCH=espAHRS.ino DEVICE=$(DEVICE) BOARD=esp32s3 CHIP=esp32 PORT=$(PORT)
+.PHONY: cat legacy-all
+legacy-all: all
 
-legacy-%:
-	$(MAKE) -f $(LEGACY_MAKEFILE) $* SKETCH=espAHRS.ino DEVICE=$(DEVICE) BOARD=esp32s3 CHIP=esp32 PORT=$(PORT)
-
-.PHONY: cat
 cat:
 	while sleep .01; do if [ -c ${PORT} ]; then stty -F ${PORT} -echo raw 115200 && cat ${PORT}; fi; done | tee ./cat.`basename ${PORT}`.out
 
@@ -92,3 +83,7 @@ log-metadata-test: replay
 	/tmp/espahrs-log-metadata-test
 	./replay /tmp/espahrs-metadata-v2.bin >/dev/null
 	! ./replay /tmp/espahrs-metadata-v2-stale.bin >/dev/null 2>&1
+
+# Default firmware builds use makeEspArduino.  The CLI workflow remains
+# available explicitly as `make cli-compile` / `make cli-upload`.
+include Makefile.makeEspArduino

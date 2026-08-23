@@ -1,4 +1,5 @@
 #pragma once
+#if defined(ESPAHRS_TDISPLAY_S3)
 #include <LovyanGFX.hpp>
 class LGFX:public lgfx::LGFX_Device{
   lgfx::Panel_ST7789 panel;
@@ -19,3 +20,4 @@ public:
     panel.config(p);setPanel(&panel);
   }
 };
+#endif

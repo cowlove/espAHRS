@@ -21,6 +21,7 @@ struct DeviceImuCalibration {
   bool applyAccelBias;
   float sensorAxisRemap[3][3];
   float gyroAxisRemap[3][3];
+  uint32_t i2cBusSpeedHz;
 };
 
 struct DeviceSensorCalibration {
@@ -38,7 +39,7 @@ struct DeviceConfiguration {
 
 constexpr DeviceImuCalibration identityImuCalibration() {
   return {0, 0, 0, {0, 0, 0}, {1, 1, 1}, {0, 0, 0}, false,
-          {{1,0,0},{0,1,0},{0,0,1}}, {{1,0,0},{0,1,0},{0,0,1}}};
+          {{1,0,0},{0,1,0},{0,0,1}}, {{1,0,0},{0,1,0},{0,0,1}}, 100000};
 }
 
 // Physical GEEK unit 28:37:2F:F8:24:7C. Numeric values are intentionally
@@ -49,7 +50,7 @@ constexpr DeviceConfiguration DEVICE_CONFIGURATIONS[] = {{
   {{
     {1.04055f, -0.67885f, 0.0f, {-0.45114f,0.01748f,0.10932f}, {1,-1,-1},
      {-0.002f,-0.019f,0.222f}, false,
-     {{1,0,0},{0,1,0},{0,0,1}}, {{1,0,0},{0,1,0},{0,0,1}}},
+     {{1,0,0},{0,1,0},{0,0,1}}, {{1,0,0},{0,1,0},{0,0,1}}, 100000},
     {0.0f, 0.0f, 0.0f, {0,0,0}, {1,1,1}, {0,0,0}, false,
      {{1,0,0},{0,-1,0},{0,0,-1}}, {{1,0,0},{0,1,0},{0,0,1}}},
     identityImuCalibration(), identityImuCalibration()
@@ -71,7 +72,8 @@ constexpr DeviceConfiguration DEVICE_CONFIGURATIONS[] = {{
   {{
     {2.07970f, 7.53569f, 0.0f, {-0.23702f,0.21373f,-0.00810f}, {1,-1,-1},
      {0,0,0}, false,
-     {{0,1,0},{-1,0,0},{0,0,1}}, {{0,-1,0},{1,0,0},{0,0,1}}},
+     // Temporary test: use the normal bus rate with the new wiring/sensors.
+     {{0,1,0},{-1,0,0},{0,0,1}}, {{0,-1,0},{1,0,0},{0,0,1}}, 100000},
     identityImuCalibration(), identityImuCalibration(), identityImuCalibration()
   }, {
     {{-16.3147f,-14.5599f,1.0301f},
@@ -145,6 +147,7 @@ inline uint32_t deviceConfigurationHash(const DeviceConfiguration &configuration
     add(&applyAccelBias, sizeof(applyAccelBias));
     add(imu.sensorAxisRemap, sizeof(imu.sensorAxisRemap));
     add(imu.gyroAxisRemap, sizeof(imu.gyroAxisRemap));
+    add(&imu.i2cBusSpeedHz, sizeof(imu.i2cBusSpeedHz));
   }
   for (const auto &compass : configuration.calibration.compass) {
     add(compass.offset, sizeof(compass.offset));
