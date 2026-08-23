@@ -27,4 +27,26 @@ LIBS += ${ALIBS}/esp32jimlib/src/espNowMux.cpp ${ALIBS}/esp32jimlib/src/jimlib.c
 LIBS += ${ALIBS}/esp32jimlib/src/simulatedFailures.cpp
 LIBS += ${ALIBS}/Arduino_CRC32/src/Arduino_CRC32.cpp ${ALIBS}/Arduino_CRC32/src/crc.cpp
 
+# T-Display builds need the LovyanGFX display implementation.  Keep this
+# conditional so the legacy GEEK build retains its original library set.
+ifeq ($(DEVICE),tdisplay-s3)
+BUILD_EXTRA_FLAGS += -DESPAHRS_TDISPLAY_S3
+#BUILD_EXTRA_FLAGS += -I${ALIBS}/LovyanGFX/src
+BUILD_EXTRA_FLAGS += -DESP_PLATFORM -DCONFIG_IDF_TARGET_ESP32S3 -DBOARD_HAS_PSRAM -DGIT_VERSION=\"$(GIT_VERSION)\"
+LLIBS += ${ALIBS}/LovyanGFX
+# LovyanGFX contains many platform backends and an internal limits.h whose
+# basename collides with the C++ standard header.  Keep only the ESP32-S3
+# sources needed by display.hpp; this is the same exclusion strategy used by
+# the working LVGL/LovyanGFX makefiles.
+LGFX := ${ALIBS}/LovyanGFX/src/lgfx
+PLATFORMS := ${LGFX}/v1/platforms
+EXCLUDE_DIRS := ${ALIBS}/lvgl|${ALIBS}/TFT_eSPI|${ALIBS}/jimlib|${ALIBS}/esp32csim|${LGFX}/v0|${LGFX}/v1/platforms/arduino_default|${LGFX}/v1/platforms/esp32c3|${LGFX}/v1/platforms/esp32s2|${LGFX}/v1/platforms/esp8266|${LGFX}/v1/platforms/samd21|${LGFX}/v1/platforms/samd51|${LGFX}/v1/platforms/spresense|${LGFX}/v1/platforms/stm32|${LGFX}/internal|${ALIBS}/LovyanGFX/examples
+EXCLUDE_DIRS := ${EXCLUDE_DIRS}|${PLATFORMS}/rp2040
+EXCLUDE_DIRS := ${EXCLUDE_DIRS}|${PLATFORMS}/sdl
+EXCLUDE_DIRS := ${EXCLUDE_DIRS}|${PLATFORMS}/framebuffer
+EXCLUDE_DIRS := ${EXCLUDE_DIRS}|${PLATFORMS}/esp32
+EXCLUDE_DIRS := ${EXCLUDE_DIRS}|${PLATFORMS}/opencv
+LIBS += ${PLATFORMS}/esp32s3/Bus_Parallel8.cpp ${PLATFORMS}/esp32/common.cpp
+endif
+
 include ${ALIBS}/makeEspArduino/makeEspArduino.mk
