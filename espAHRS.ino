@@ -711,16 +711,11 @@ void updateLoggingButton() {
 
 void displayUpdateTask(void *) {
   HalDisplayStatus status{};
-  uint32_t lastTouchPollMs = 0;
   for (;;) {
-    // The reference touch test is IRQ-driven, but use a slow polling path
-    // here as a diagnostic because the CST816 IRQ is currently not firing.
-    // Keeping this in the low-priority display task prevents touch I2C traffic
-    // from entering the sensor/AHRS loop.
-    if (tdisplayTouchPresent &&
-        (tdisplayTouchIRQ || (uint32_t)(millis() - lastTouchPollMs) >= 20)) {
+    // The CST816 IRQ only wakes the low-priority display task; all touch I2C
+    // traffic remains out of the sensor/AHRS loop.
+    if (tdisplayTouchPresent && tdisplayTouchIRQ) {
       tdisplayTouchIRQ = false;
-      lastTouchPollMs = millis();
       int16_t x = 0, y = 0;
       if (tdisplayTouch.getPoint(&x, &y, 1) != 0) {
         // CST816 reports portrait-native coordinates; the configured driver
