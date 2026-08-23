@@ -1545,6 +1545,28 @@ afterPrimaryImu:
                     (unsigned long)baroDiagValid,
                     (unsigned long)(baroDiagSamples - baroDiagValid),
                     baroDiagMaxGapUs / 1000.0f);
+      const AircraftAHRS::State &biasState = ahrs.state(last);
+      Serial.printf("GYRO_BIAS t=%.1fs mode=%s qual_t=%.1f "
+                    "bias=%.6f,%.6f,%.6f "
+                    "conf=%.3f,%.3f,%.3f "
+                    "info=%.1f,%.1f,%.1f "
+                    "innov=%.4f,%.4f,%.4f rejected=%lu\n",
+                    (float)last / 1000.0f,
+                    biasState.adaptiveGyroBiasQualified ? "LEARN" : "HOLD",
+                    biasState.adaptiveGyroBiasQualifyingTimeSec,
+                    biasState.adaptiveGyroBiasXDegSec,
+                    biasState.adaptiveGyroBiasYDegSec,
+                    biasState.adaptiveGyroBiasZDegSec,
+                    biasState.adaptiveGyroBiasConfidenceX,
+                    biasState.adaptiveGyroBiasConfidenceY,
+                    biasState.adaptiveGyroBiasConfidenceZ,
+                    biasState.adaptiveGyroBiasInformationXSec,
+                    biasState.adaptiveGyroBiasInformationYSec,
+                    biasState.adaptiveGyroBiasInformationZSec,
+                    biasState.adaptiveGyroBiasRollInnovationDeg,
+                    biasState.adaptiveGyroBiasPitchInnovationDeg,
+                    biasState.adaptiveGyroBiasHeadingInnovationDeg,
+                    (unsigned long)biasState.adaptiveGyroBiasRejectedInnovations);
       imuDiagWindowStartMs = last;
       imuDiagReady = imuDiagValid = imuDiagInvalid = 0;
       imuDiagGapsOver20ms = imuDiagGapsOver50ms = imuDiagMaxGapUs = 0;
