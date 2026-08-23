@@ -33,6 +33,9 @@ LIBS += ${ALIBS}/Arduino_CRC32/src/Arduino_CRC32.cpp ${ALIBS}/Arduino_CRC32/src/
 ifeq ($(DEVICE),tdisplay-s3)
 BUILD_EXTRA_FLAGS += -DESPAHRS_TDISPLAY_S3
 #BUILD_EXTRA_FLAGS += -I${ALIBS}/LovyanGFX/src
+# Match the Arduino-CLI board options USBMode=hwcdc,CDCOnBoot=cdc so
+# Arduino Serial uses the native USB CDC interface on the T-Display-S3.
+BUILD_EXTRA_FLAGS += -DARDUINO_USB_MODE=1 -DARDUINO_USB_CDC_ON_BOOT=1
 BUILD_EXTRA_FLAGS += -DESP_PLATFORM -DCONFIG_IDF_TARGET_ESP32S3 -DBOARD_HAS_PSRAM -DGIT_VERSION=\"$(GIT_VERSION)\"
 LIBS += ${ALIBS}/LovyanGFX
 # LovyanGFX contains many platform backends and an internal limits.h whose

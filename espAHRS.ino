@@ -83,7 +83,77 @@ HardwareSerial gpsSerial(1);
 Adafruit_LSM9DS1 imu;
 ICM_20948_I2C icm20948;
 LSM6DSO lsm6dso;
-SparkFun_MicroPressure microPressure;
+class AsyncMicroPressure {
+  enum class State { Idle, Converting, Ready } state = State::Idle;
+  uint8_t address = 0x18;
+  float pressurePa = NAN;
+  uint32_t nextPollMs = 0;
+  uint32_t conversionDeadlineMs = 0;
+  uint32_t retryAfterMs = 0;
+  uint8_t failures = 0;
+  bool write(const uint8_t *data, size_t length) {
+    Wire.beginTransmission(address);
+    Wire.write(data, length);
+    return Wire.endTransmission() == 0;
+  }
+public:
+  bool begin(uint8_t addr, TwoWire &wire) {
+    (void)wire;
+    address = addr;
+    Wire.beginTransmission(address);
+    return Wire.endTransmission() == 0;
+  }
+  void start() {
+    uint32_t now = millis();
+    if (state != State::Idle || (int32_t)(now - retryAfterMs) < 0) return;
+    const uint8_t command[] = {0xAA, 0x00, 0x00};
+    if (write(command, sizeof(command))) {
+      state = State::Converting;
+      nextPollMs = now + 2;
+      conversionDeadlineMs = now + 100;
+    } else {
+      retryAfterMs = now + 1000;
+    }
+  }
+  void service() {
+    if (state != State::Converting) return;
+    uint32_t now = millis();
+    if ((int32_t)(now - nextPollMs) < 0) return;
+    nextPollMs = now + 2;
+    if ((int32_t)(now - conversionDeadlineMs) >= 0) {
+      state = State::Idle;
+      retryAfterMs = now + 1000;
+      return;
+    }
+    // MicroPressure returns status directly; unlike a register-mapped sensor,
+    // it does not accept a register-pointer write before requestFrom().
+    if (Wire.requestFrom(address, (uint8_t)1) != 1) {
+      state = State::Idle;
+      retryAfterMs = now + 1000;
+      return;
+    }
+    uint8_t status = Wire.read();
+    if (status == 0xFF || (status & BUSY_FLAG)) return;
+    if (Wire.requestFrom(address, (uint8_t)4) != 4) {
+      state = State::Idle;
+      retryAfterMs = now + 1000;
+      return;
+    }
+    status = Wire.read();
+    uint32_t raw = ((uint32_t)Wire.read() << 16) | ((uint32_t)Wire.read() << 8) | Wire.read();
+    if (status & (INTEGRITY_FLAG | MATH_SAT_FLAG)) { state = State::Idle; return; }
+    float psi = ((raw - OUTPUT_MIN) * 25.0f) / (float)(OUTPUT_MAX - OUTPUT_MIN);
+    pressurePa = (psi * 6894.7573f);
+    state = State::Ready;
+    failures = 0;
+  }
+  bool takePressure(float &value) {
+    if (state != State::Ready) return false;
+    value = pressurePa; state = State::Idle; return true;
+  }
+};
+AsyncMicroPressure microPressure;
+constexpr bool DISABLE_MICROPRESSURE_FOR_LOOP_TEST = false;
 SensorQMI8658 qmi8658;
 SensorQMC6310 qmc6310;
 XPowersAXP2101 pmu;
@@ -236,6 +306,8 @@ uint32_t lastImuRecoveryAttemptMs = 0;
 uint32_t imuDiagWindowStartMs = 0, imuDiagLastSampleUs = 0;
 uint32_t imuDiagReady = 0, imuDiagValid = 0, imuDiagInvalid = 0;
 uint32_t imuDiagGapsOver20ms = 0, imuDiagGapsOver50ms = 0, imuDiagMaxGapUs = 0;
+uint32_t baroDiagSamples = 0, baroDiagValid = 0, baroDiagLastSampleUs = 0;
+uint32_t baroDiagMaxGapUs = 0;
 uint32_t compassDiagReads = 0, compassDiagValid = 0, compassDiagInvalid = 0;
 uint32_t compassDiagLastUs = 0, compassDiagGapsOver20ms = 0;
 uint32_t compassDiagGapsOver50ms = 0, compassDiagMaxGapUs = 0;
@@ -414,6 +486,7 @@ void setupDisplay() {
   tdisplay.drawString("espAHRS T-Display-S3", 160, 58);
   tdisplay.drawString("display online", 160, 82);
   tdisplayTouchWire.begin(HARDWARE.touchScl, HARDWARE.touchSda, 400000);
+  tdisplayTouchWire.setClock(400000);
   tdisplayTouchPresent = tdisplayTouch.begin(tdisplayTouchWire,
       CST816_SLAVE_ADDRESS, HARDWARE.touchScl, HARDWARE.touchSda);
   tdisplayTouch.setSwapXY(true);
@@ -432,7 +505,9 @@ void setupDisplay() {
 #endif
   if (HARDWARE.display == HalDisplayKind::TBeamSupreme_SH1106) {
   Wire.begin(HARDWARE.i2cSda, HARDWARE.i2cScl);
-  Wire.setClock(20000); // Conservative rate for marginal external wiring.
+  // The T-Display Qwiic bus has short local wiring; use a standard speed.
+  // Keep the older T-Beam path conservative for its longer harness.
+  Wire.setClock(HARDWARE.kind == HalBoardKind::TDisplayS3 ? 100000 : 20000);
   Wire.setTimeOut(20);
   // Both addresses ACK on this board. Test 0x3D first: it is the alternate
   // SH1106 address and selecting 0x3C produced no visible pixels.
@@ -958,21 +1033,43 @@ void setupBerryIMU() {
   // Probe both legal LSM6DSO addresses because SA0 is board/configuration
   // dependent.  This path deliberately does not claim a magnetometer: the
   // LSM6DSO is accelerometer + gyro only.
-  bool lsmFound = lsm6dso.begin(0x6B, Wire);
-  if (!lsmFound) lsmFound = lsm6dso.begin(0x6A, Wire);
+  bool probe6b = lsm6dso.begin(0x6B, Wire);
+  bool probe6a = false;
+  bool lsmFound = probe6b;
+  if (!lsmFound) {
+    probe6a = lsm6dso.begin(0x6A, Wire);
+    lsmFound = probe6a;
+  }
+  Serial.printf("LSM6DSO probe 0x6B=%s 0x6A=%s\n",
+                probe6b ? "OK" : "FAIL", probe6a ? "OK" : "FAIL");
   if (lsmFound) {
     lsm6dso.imuSettings.accelEnabled = true;
     lsm6dso.imuSettings.gyroEnabled = true;
     lsm6dso.imuSettings.accelRange = 4;
     lsm6dso.imuSettings.gyroRange = 245;
-    lsm6dso.imuSettings.accelSampleRate = 104;
-    lsm6dso.imuSettings.gyroSampleRate = 104;
-    lsmFound = lsm6dso.beginSettings() == IMU_SUCCESS;
+    lsm6dso.imuSettings.accelSampleRate = 52;
+    lsm6dso.imuSettings.gyroSampleRate = 52;
+    const auto settingsStatus = lsm6dso.beginSettings();
+    lsmFound = settingsStatus == IMU_SUCCESS;
+    Serial.printf("LSM6DSO beginSettings=%d (%s)\n",
+                  (int)settingsStatus, lsmFound ? "OK" : "FAIL");
+    if (lsmFound) {
+      // The SparkFun driver exposes the bandwidth fields but does not apply
+      // them in beginSettings(). Enable the accelerometer LPF2 and gyro LPF1
+      // explicitly after configuring the 104 Hz output data rates.
+      // These writes tune the filters; they are not the device-presence
+      // test.  Some library revisions return a nonzero status here even
+      // after the register write succeeds, so do not discard a detected IMU.
+      const auto accelFilterStatus = lsm6dso.writeRegister(0x10, 0x3A); // 52 Hz, +/-4 g, LPF2
+      const auto gyroFilterStatus = lsm6dso.writeRegister(0x15, 0x83);  // gyro LPF1, FTYPE=3
+      Serial.printf("LSM6DSO filter writes accel=%d gyro=%d\n",
+                    (int)accelFilterStatus, (int)gyroFilterStatus);
+    }
   }
   imuOk = lsmFound;
   imuKind = imuOk ? ImuKind::LSM6DSO : ImuKind::None;
   if (imuOk) {
-    actualImu = {104.0f, 104.0f, 1.0f / 104.0f,
+    actualImu = {52.0f, 52.0f, 1.0f / 52.0f,
                  REQUESTED_IMU.lowPassCutoffHz, true};
     ahrs.setGyroIntegrationDt(actualImu.integrationDtSec);
   }
@@ -1242,6 +1339,8 @@ void loop() {
   }
   recoverGeekImus(millis());
   if (baroOk && baroKind == BaroKind::MS5837) ms5837.service(millis());
+  if (baroOk && baroKind == BaroKind::MicroPressure &&
+      !DISABLE_MICROPRESSURE_FOR_LOOP_TEST) microPressure.service();
   if (baroKind == BaroKind::MS5837 && sessionLog.active()) {
     FusionBaroRawRecord raw{};
     if (ms5837.takeRaw(raw)) sessionLog.appendBaroRaw(raw);
@@ -1266,12 +1365,27 @@ void loop() {
       gx = icm20948.gyrX(); gy = icm20948.gyrY(); gz = icm20948.gyrZ();
       mx = icm20948.magX(); my = icm20948.magY(); mz = icm20948.magZ();
     } else if (imuKind == ImuKind::LSM6DSO) {
-      ax = lsm6dso.readFloatAccelX() * 9.80665f;
-      ay = lsm6dso.readFloatAccelY() * 9.80665f;
-      az = lsm6dso.readFloatAccelZ() * 9.80665f;
-      gx = lsm6dso.readFloatGyroX();
-      gy = lsm6dso.readFloatGyroY();
-      gz = lsm6dso.readFloatGyroZ();
+      uint8_t dataReady = lsm6dso.listenDataReady();
+      // Use accel-ready as the sample trigger.  The two status bits are not
+      // guaranteed to be asserted simultaneously, and requiring both was
+      // rejecting every poll on the T-Display.  The gyro runs at the same
+      // ODR and is fetched in the same burst.
+      if ((dataReady & ACCEL_DATA_READY) == 0) goto afterPrimaryImu;
+      // The six convenience accessors each perform a separate I2C read (and
+      // reread the range registers).  Gyro and accel output registers are
+      // contiguous, so fetch all 12 bytes in one burst instead.
+      uint8_t imuRaw[12]{};
+      bool imuReadOk = lsm6dso.readMultipleRegisters(imuRaw, 0x22, sizeof(imuRaw)) == IMU_SUCCESS;
+      auto le16 = [&](uint8_t i) -> int16_t {
+        return (int16_t)((uint16_t)imuRaw[i] | ((uint16_t)imuRaw[i + 1] << 8));
+      };
+      gx = le16(0) * 0.00875f;
+      gy = le16(2) * 0.00875f;
+      gz = le16(4) * 0.00875f;
+      ax = le16(6) * 0.000122f * 9.80665f;
+      ay = le16(8) * 0.000122f * 9.80665f;
+      az = le16(10) * 0.000122f * 9.80665f;
+      if (!imuReadOk) ax = ay = az = gx = gy = gz = NAN;
       mx = my = mz = NAN;
     } else {
       imu.getEvent(&accel, &mag, &gyro, nullptr);
@@ -1320,13 +1434,15 @@ afterPrimaryImu:
   }
   uint32_t baroSampleUs = micros();
   float pressurePa = NAN;
-  bool baroDue = baroKind == BaroKind::MS5837 ? ms5837.takePressure(pressurePa)
+  bool baroDue = baroKind == BaroKind::MS5837 ? ms5837.takePressure(pressurePa) :
+                 baroKind == BaroKind::MicroPressure ? microPressure.takePressure(pressurePa)
                                                : (int32_t)(baroSampleUs - nextBaroSampleUs) >= 0;
   if (baroOk && baroDue) {
     nextBaroSampleUs = baroSampleUs + BARO_OUTPUT_PERIOD_US;
     bool readOk = true;
-    if (baroKind == BaroKind::MicroPressure) pressurePa = microPressure.readPressure(PA);
-    else if (baroKind == BaroKind::BME280) pressurePa = bme.readPressure();
+    if (baroKind == BaroKind::MicroPressure) {
+      // pressurePa was populated by the asynchronous takePressure() above.
+    } else if (baroKind == BaroKind::BME280) pressurePa = bme.readPressure();
     else if (baroKind == BaroKind::BMP280) pressurePa = baro.readPressure();
     else {
       readOk = bmp3.performReading();
@@ -1338,6 +1454,13 @@ afterPrimaryImu:
                    (int32_t)(millis() - baroReadyAfterMs) >= 0;
     bool valid = settled && readOk && isfinite(pressurePa) &&
                  isfinite(altitudeM) && pressurePa > 0.0f;
+    ++baroDiagSamples;
+    if (baroDiagLastSampleUs) {
+      uint32_t gapUs = baroSampleUs - baroDiagLastSampleUs;
+      if (gapUs > baroDiagMaxGapUs) baroDiagMaxGapUs = gapUs;
+    }
+    baroDiagLastSampleUs = baroSampleUs;
+    if (valid) ++baroDiagValid;
     baroDataHealthy = valid;
     if (valid) {
       latestBaroPressurePa = pressurePa;
@@ -1346,6 +1469,12 @@ afterPrimaryImu:
     if (sessionLog.active()) sessionLog.appendBaro(
         baroSampleUs, pressurePa, altitudeM, valid);
     ahrs.updateBaro(altitudeM, valid, millis());
+  }
+  if (baroOk && baroKind == BaroKind::MicroPressure &&
+      !DISABLE_MICROPRESSURE_FOR_LOOP_TEST &&
+      (int32_t)(baroSampleUs - nextBaroSampleUs) >= 0) {
+    nextBaroSampleUs = baroSampleUs + BARO_OUTPUT_PERIOD_US;
+    microPressure.start();
   }
   if (millis() - last >= 1000) {
     last = millis();
@@ -1364,19 +1493,28 @@ afterPrimaryImu:
     espnow.write(packet, true);
     Serial.print(packet);
     if ((uint32_t)(last - imuDiagWindowStartMs) >= 30000) {
-      Serial.printf("IMU30 ready=%lu valid=%lu invalid=%lu gap20=%lu gap50=%lu maxGapMs=%.2f "
+      float windowSec = (last - imuDiagWindowStartMs) / 1000.0f;
+      Serial.printf("IMU30 sec=%.1f rate=%.2fHz ready=%lu valid=%lu invalid=%lu gap20=%lu gap50=%lu maxGapMs=%.2f "
                     "C reads=%lu valid=%lu invalid=%lu gap20=%lu gap50=%lu maxGapMs=%.2f\n",
+                    windowSec, imuDiagValid / windowSec,
                     (unsigned long)imuDiagReady, (unsigned long)imuDiagValid,
                     (unsigned long)imuDiagInvalid, (unsigned long)imuDiagGapsOver20ms,
                     (unsigned long)imuDiagGapsOver50ms, imuDiagMaxGapUs / 1000.0f,
                     (unsigned long)compassDiagReads, (unsigned long)compassDiagValid,
                     (unsigned long)compassDiagInvalid, (unsigned long)compassDiagGapsOver20ms,
                     (unsigned long)compassDiagGapsOver50ms, compassDiagMaxGapUs / 1000.0f);
+      Serial.printf("BARO30 rate=%.2fHz samples=%lu valid=%lu invalid=%lu maxGapMs=%.2f\n",
+                    baroDiagSamples / windowSec, (unsigned long)baroDiagSamples,
+                    (unsigned long)baroDiagValid,
+                    (unsigned long)(baroDiagSamples - baroDiagValid),
+                    baroDiagMaxGapUs / 1000.0f);
       imuDiagWindowStartMs = last;
       imuDiagReady = imuDiagValid = imuDiagInvalid = 0;
       imuDiagGapsOver20ms = imuDiagGapsOver50ms = imuDiagMaxGapUs = 0;
       compassDiagReads = compassDiagValid = compassDiagInvalid = 0;
       compassDiagGapsOver20ms = compassDiagGapsOver50ms = compassDiagMaxGapUs = 0;
+      baroDiagSamples = baroDiagValid = baroDiagMaxGapUs = 0;
+      baroDiagLastSampleUs = 0;
     }
     const AircraftAHRS::State &fused = ahrs.state(millis());
     Serial.printf("AHRS roll=%.1f pitch=%.1f heading=%.1f baroAlt=%.1f climb=%.2f gyroBias=%s/%.1fs[%.4f,%.4f,%.4f]\n",
