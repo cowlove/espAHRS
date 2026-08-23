@@ -33,7 +33,7 @@ ifeq ($(DEVICE),tdisplay-s3)
 BUILD_EXTRA_FLAGS += -DESPAHRS_TDISPLAY_S3
 #BUILD_EXTRA_FLAGS += -I${ALIBS}/LovyanGFX/src
 BUILD_EXTRA_FLAGS += -DESP_PLATFORM -DCONFIG_IDF_TARGET_ESP32S3 -DBOARD_HAS_PSRAM -DGIT_VERSION=\"$(GIT_VERSION)\"
-LLIBS += ${ALIBS}/LovyanGFX
+LIBS += ${ALIBS}/LovyanGFX
 # LovyanGFX contains many platform backends and an internal limits.h whose
 # basename collides with the C++ standard header.  Keep only the ESP32-S3
 # sources needed by display.hpp; this is the same exclusion strategy used by
@@ -41,11 +41,7 @@ LLIBS += ${ALIBS}/LovyanGFX
 LGFX := ${ALIBS}/LovyanGFX/src/lgfx
 PLATFORMS := ${LGFX}/v1/platforms
 EXCLUDE_DIRS := ${ALIBS}/lvgl|${ALIBS}/TFT_eSPI|${ALIBS}/jimlib|${ALIBS}/esp32csim|${LGFX}/v0|${LGFX}/v1/platforms/arduino_default|${LGFX}/v1/platforms/esp32c3|${LGFX}/v1/platforms/esp32s2|${LGFX}/v1/platforms/esp8266|${LGFX}/v1/platforms/samd21|${LGFX}/v1/platforms/samd51|${LGFX}/v1/platforms/spresense|${LGFX}/v1/platforms/stm32|${LGFX}/internal|${ALIBS}/LovyanGFX/examples
-EXCLUDE_DIRS := ${EXCLUDE_DIRS}|${PLATFORMS}/rp2040
-EXCLUDE_DIRS := ${EXCLUDE_DIRS}|${PLATFORMS}/sdl
-EXCLUDE_DIRS := ${EXCLUDE_DIRS}|${PLATFORMS}/framebuffer
-EXCLUDE_DIRS := ${EXCLUDE_DIRS}|${PLATFORMS}/esp32
-EXCLUDE_DIRS := ${EXCLUDE_DIRS}|${PLATFORMS}/opencv
+EXCLUDE_DIRS := ${ALIBS}/lvgl|${ALIBS}/TFT_eSPI|${ALIBS}/jimlib|${ALIBS}/esp32csim|${LGFX}/v0|${PLATFORMS}/arduino_default|${PLATFORMS}/esp32|${PLATFORMS}/esp32c3|${PLATFORMS}/esp32s2|${PLATFORMS}/esp8266|${PLATFORMS}/samd21|${PLATFORMS}/samd51|${PLATFORMS}/spresense|${PLATFORMS}/stm32|${PLATFORMS}/rp2040|${PLATFORMS}/sdl|${PLATFORMS}/framebuffer|${PLATFORMS}/opencv|${LGFX}/internal|${ALIBS}/LovyanGFX/examples
 LIBS += ${PLATFORMS}/esp32s3/Bus_Parallel8.cpp ${PLATFORMS}/esp32/common.cpp
 endif
 

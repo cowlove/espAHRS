@@ -1,5 +1,7 @@
 DEVICE ?= tdisplay-s3
 PORT ?= /dev/ttyACM0
+V := 1
+VERBOSE=1
 UPLOAD_PORT := $(PORT)
 ARDUINO_CLI ?= $(HOME)/bin/arduino-cli
 PARTITION_SCHEME ?= huge_app
