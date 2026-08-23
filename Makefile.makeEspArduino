@@ -41,8 +41,8 @@ LIBS += ${ALIBS}/LovyanGFX
 LGFX := ${ALIBS}/LovyanGFX/src/lgfx
 PLATFORMS := ${LGFX}/v1/platforms
 EXCLUDE_DIRS := ${ALIBS}/lvgl|${ALIBS}/TFT_eSPI|${ALIBS}/jimlib|${ALIBS}/esp32csim|${LGFX}/v0|${LGFX}/v1/platforms/arduino_default|${LGFX}/v1/platforms/esp32c3|${LGFX}/v1/platforms/esp32s2|${LGFX}/v1/platforms/esp8266|${LGFX}/v1/platforms/samd21|${LGFX}/v1/platforms/samd51|${LGFX}/v1/platforms/spresense|${LGFX}/v1/platforms/stm32|${LGFX}/internal|${ALIBS}/LovyanGFX/examples
-EXCLUDE_DIRS := ${ALIBS}/lvgl|${ALIBS}/TFT_eSPI|${ALIBS}/jimlib|${ALIBS}/esp32csim|${LGFX}/v0|${PLATFORMS}/arduino_default|${PLATFORMS}/esp32|${PLATFORMS}/esp32c3|${PLATFORMS}/esp32s2|${PLATFORMS}/esp8266|${PLATFORMS}/samd21|${PLATFORMS}/samd51|${PLATFORMS}/spresense|${PLATFORMS}/stm32|${PLATFORMS}/rp2040|${PLATFORMS}/sdl|${PLATFORMS}/framebuffer|${PLATFORMS}/opencv|${LGFX}/internal|${ALIBS}/LovyanGFX/examples
-LIBS += ${PLATFORMS}/esp32s3/Bus_Parallel8.cpp ${PLATFORMS}/esp32/common.cpp
+EXCLUDE_DIRS := ${ALIBS}/lvgl|${ALIBS}/TFT_eSPI|${ALIBS}/jimlib|${ALIBS}/esp32csim|${LGFX}/v0|${PLATFORMS}/arduino_default|${PLATFORMS}/esp32/|${PLATFORMS}/esp32/Bus_Parallel8.cpp|${PLATFORMS}/esp32c3|${PLATFORMS}/esp32s2|${PLATFORMS}/esp8266|${PLATFORMS}/samd21|${PLATFORMS}/samd51|${PLATFORMS}/spresense|${PLATFORMS}/stm32|${PLATFORMS}/rp2040|${PLATFORMS}/sdl|${PLATFORMS}/framebuffer|${PLATFORMS}/opencv|${LGFX}/internal|${ALIBS}/LovyanGFX/examples
+LIBS += LovyanGFX_Bus_Parallel8_esp32s3.cpp ${PLATFORMS}/esp32/common.cpp
 endif
 
 include ${ALIBS}/makeEspArduino/makeEspArduino.mk
