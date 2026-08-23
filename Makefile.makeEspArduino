@@ -3,7 +3,7 @@
 BOARD ?= esp32s3
 PORT ?= /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_28:37:2F:F8:24:7C-if00
 UPLOAD_PORT := $(PORT)
-VERBOSE=1
+#VERBOSE=1
 MONITOR_PORT := $(PORT)
 CHIP ?= esp32
 SKETCH ?= espAHRS.ino
