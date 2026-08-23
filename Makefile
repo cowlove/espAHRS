@@ -1,5 +1,5 @@
-DEVICE ?= geek
-PORT ?= /dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_28:37:2F:F8:24:7C-if00
+DEVICE ?= tdisplay-s3
+PORT ?= /dev/ttyACM0
 UPLOAD_PORT := $(PORT)
 ARDUINO_CLI ?= $(HOME)/bin/arduino-cli
 PARTITION_SCHEME ?= huge_app
