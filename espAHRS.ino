@@ -958,8 +958,8 @@ void setupBerryIMU() {
   // Probe both legal LSM6DSO addresses because SA0 is board/configuration
   // dependent.  This path deliberately does not claim a magnetometer: the
   // LSM6DSO is accelerometer + gyro only.
-  bool lsmFound = lsm6dso.begin(DEFAULT_ADDRESS, Wire);
-  if (!lsmFound) lsmFound = lsm6dso.begin(ALT_ADDRESS, Wire);
+  bool lsmFound = lsm6dso.begin(0x6B, Wire);
+  if (!lsmFound) lsmFound = lsm6dso.begin(0x6A, Wire);
   if (lsmFound) {
     lsm6dso.imuSettings.accelEnabled = true;
     lsm6dso.imuSettings.gyroEnabled = true;
@@ -976,7 +976,7 @@ void setupBerryIMU() {
                  REQUESTED_IMU.lowPassCutoffHz, true};
     ahrs.setGyroIntegrationDt(actualImu.integrationDtSec);
   }
-  bool pressureFound = microPressure.begin(DEFAULT_ADDRESS, Wire);
+  bool pressureFound = microPressure.begin(0x18, Wire);
   baroOk = pressureFound;
   baroKind = pressureFound ? BaroKind::MicroPressure : BaroKind::None;
   Serial.printf("T-Display LSM6DSO=%s MicroPressure=%s\n",
