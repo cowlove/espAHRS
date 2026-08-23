@@ -170,6 +170,7 @@ TwoWire tdisplayTouchWire = TwoWire(1);
 volatile bool tdisplayTouchIRQ = false;
 bool tdisplayTouchPresent = false;
 bool tdisplayTouchDown = false;
+int16_t tdisplayLastTouchX = -1, tdisplayLastTouchY = -1;
 #endif
 class MS5837Sensor {
   uint16_t c[7]{};
@@ -485,10 +486,11 @@ void setupDisplay() {
   tdisplay.setTextColor(TFT_WHITE, TFT_BLACK);
   tdisplay.drawString("espAHRS T-Display-S3", 160, 58);
   tdisplay.drawString("display online", 160, 82);
-  tdisplayTouchWire.begin(HARDWARE.touchScl, HARDWARE.touchSda, 400000);
+  tdisplayTouchWire.begin(HARDWARE.touchSda, HARDWARE.touchScl, 400000);
   tdisplayTouchWire.setClock(400000);
+  tdisplayTouch.setPins(HARDWARE.touchRst, HARDWARE.touchIrq);
   tdisplayTouchPresent = tdisplayTouch.begin(tdisplayTouchWire,
-      CST816_SLAVE_ADDRESS, HARDWARE.touchScl, HARDWARE.touchSda);
+      CST816_SLAVE_ADDRESS, HARDWARE.touchSda, HARDWARE.touchScl);
   tdisplayTouch.setSwapXY(true);
   tdisplayTouch.setResolution(320, 170);
   tdisplayTouch.setTargetResolution(320, 170);
@@ -709,12 +711,40 @@ void updateLoggingButton() {
 
 void displayUpdateTask(void *) {
   HalDisplayStatus status{};
+  uint32_t lastTouchPollMs = 0;
   for (;;) {
+    // The reference touch test is IRQ-driven, but use a slow polling path
+    // here as a diagnostic because the CST816 IRQ is currently not firing.
+    // Keeping this in the low-priority display task prevents touch I2C traffic
+    // from entering the sensor/AHRS loop.
+    if (tdisplayTouchPresent &&
+        (tdisplayTouchIRQ || (uint32_t)(millis() - lastTouchPollMs) >= 20)) {
+      tdisplayTouchIRQ = false;
+      lastTouchPollMs = millis();
+      int16_t x = 0, y = 0;
+      if (tdisplayTouch.getPoint(&x, &y, 1) != 0) {
+        // CST816 reports portrait-native coordinates; the configured driver
+        // swap maps them to the landscape display. Match touch-test's final
+        // short-axis orientation explicitly.
+        y = 169 - y;
+        tdisplayLastTouchX = x;
+        tdisplayLastTouchY = y;
+        tdisplayTouchDown = true;
+        Serial.printf("TOUCH display_x=%d display_y=%d\n", x, y);
+      } else {
+        if (tdisplayTouchDown) Serial.println("TOUCH RELEASE");
+        tdisplayTouchDown = false;
+      }
+    }
     if (displayStatusMutex &&
         xSemaphoreTake(displayStatusMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
       status = latestDisplayStatus;
       xSemaphoreGive(displayStatusMutex);
       halUpdateDisplay(status);
+      if (tdisplayLastTouchX >= 0 && tdisplayLastTouchY >= 0) {
+        tdisplay.fillCircle(tdisplayLastTouchX, tdisplayLastTouchY, 5,
+                            tdisplayTouchDown ? TFT_GREEN : TFT_DARKGREY);
+      }
     }
     // Priority 0 keeps display transfers below the sensor/AHRS loop.  The
     // short delay also prevents a failed/unplugged panel from being retried
